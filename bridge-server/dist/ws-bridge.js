@@ -23,7 +23,13 @@ class WebSocketBridge {
             this.activeClient = ws;
             ws.on('message', (data) => {
                 try {
-                    const response = JSON.parse(data.toString());
+                    const msg = JSON.parse(data.toString());
+                    // 忽略心跳保活包
+                    if (msg.type === 'PING') {
+                        ws.send(JSON.stringify({ type: 'PONG' }));
+                        return;
+                    }
+                    const response = msg;
                     const pending = this.pendingRequests.get(response.id);
                     if (pending) {
                         clearTimeout(pending.timer);

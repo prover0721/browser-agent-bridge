@@ -1,15 +1,31 @@
-// background.js - Browser Agent Background Service Worker
+// background.js - Browser Agent Background Service Worker (with Keep-Alive & Auto-Reconnect)
 let socket = null;
 let isConnecting = false;
 let currentPort = 3088;
 let lastSelectedText = '';
 let activeControlledTab = null;
+let heartbeatTimer = null;
 
 // 从 storage 加载配置端口
 chrome.storage.local.get(['bridgePort'], (res) => {
   if (res.bridgePort) currentPort = res.bridgePort;
   connectBridge();
 });
+
+// 启动定时保活与自动重连循环（防止 MV3 Service Worker 意外休眠）
+if (!heartbeatTimer) {
+  heartbeatTimer = setInterval(() => {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      try {
+        socket.send(JSON.stringify({ type: 'PING' }));
+      } catch (e) {
+        // 忽略心跳发送异常
+      }
+    } else if (!isConnecting) {
+      connectBridge();
+    }
+  }, 4000);
+}
 
 /**
  * 建立与本地 MCP 桥接服务的 WebSocket 连接
@@ -35,6 +51,10 @@ function connectBridge() {
     socket.onmessage = async (event) => {
       try {
         const msg = JSON.parse(event.data);
+        if (msg.type === 'PING' || msg.type === 'PONG') {
+          return; // 心跳包忽略
+        }
+
         console.log('[BrowserAgent] Received command:', msg);
         notifySidePanel({ type: 'AUDIT_LOG', log: msg });
 
@@ -42,31 +62,31 @@ function connectBridge() {
         const response = await handleBridgeCommand(method, params || {});
         
         // 将执行结果回传给 Bridge Server
-        socket.send(JSON.stringify({
-          id,
-          result: response.result || null,
-          error: response.error || null
-        }));
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({
+            id,
+            result: response.result || null,
+            error: response.error || null
+          }));
+        }
       } catch (err) {
         console.error('[BrowserAgent] Message processing error:', err);
       }
     };
 
     socket.onclose = () => {
-      console.log('[BrowserAgent] Disconnected from Bridge. Will retry in 3s...');
+      console.log('[BrowserAgent] Disconnected from Bridge.');
       isConnecting = false;
       notifySidePanel({ type: 'STATUS_CHANGE', status: 'disconnected', port: currentPort });
-      setTimeout(connectBridge, 3000);
     };
 
     socket.onerror = (err) => {
       console.warn('[BrowserAgent] WebSocket error:', err);
-      socket.close();
+      try { socket.close(); } catch (e) {}
     };
   } catch (err) {
     isConnecting = false;
     notifySidePanel({ type: 'STATUS_CHANGE', status: 'disconnected', port: currentPort });
-    setTimeout(connectBridge, 3000);
   }
 }
 
@@ -74,11 +94,13 @@ function connectBridge() {
  * 获取当前用户的活动受控标签页
  */
 async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (tab && !tab.url?.startsWith('chrome://') && !tab.url?.startsWith('edge://')) {
-    activeControlledTab = tab;
-    return tab;
-  }
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (tab && !tab.url?.startsWith('chrome://') && !tab.url?.startsWith('edge://')) {
+      activeControlledTab = tab;
+      return tab;
+    }
+  } catch (e) {}
   return activeControlledTab;
 }
 
@@ -93,7 +115,6 @@ async function ensureContentScriptInjected(tabId) {
       target: { tabId },
       files: ['content.js']
     });
-    // 等待脚本初始化
     await new Promise((r) => setTimeout(r, 100));
   }
 }
@@ -107,7 +128,7 @@ async function handleBridgeCommand(method, params) {
     return { error: '当前没有可用的活动浏览器标签页，请先打开一个常规网页。' };
   }
 
-  // 1. 直接由 Background 处理的导航/页面级别命令
+  // 1. 页面级命令
   if (method === 'browser_get_active_tab') {
     return {
       result: {
@@ -125,12 +146,11 @@ async function handleBridgeCommand(method, params) {
       url = 'https://' + url;
     }
     await chrome.tabs.update(tab.id, { url });
-    // 等待页面开始加载
     await new Promise((r) => setTimeout(r, 1000));
     return { result: { message: `已成功跳转至: ${url}` } };
   }
 
-  // 2. 需要派发给 Content Script 的 DOM 操作
+  // 2. DOM 操作
   try {
     await ensureContentScriptInjected(tab.id);
 
@@ -197,9 +217,7 @@ async function broadcastActiveTabInfo() {
  * 向 SidePanel 发送状态更新
  */
 function notifySidePanel(message) {
-  chrome.runtime.sendMessage(message).catch(() => {
-    // 侧边栏未打开时忽略错误
-  });
+  chrome.runtime.sendMessage(message).catch(() => {});
 }
 
 // 监听图标点击 -> 打开 SidePanel
@@ -209,19 +227,13 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
-// 监听 Tab 切换
-chrome.tabs.onActivated.addListener(() => {
-  broadcastActiveTabInfo();
-});
-
-// 监听 Tab 更新完成
+// 监听 Tab 切换与更新
+chrome.tabs.onActivated.addListener(() => { broadcastActiveTabInfo(); });
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === 'complete') {
-    broadcastActiveTabInfo();
-  }
+  if (changeInfo.status === 'complete') broadcastActiveTabInfo();
 });
 
-// 接收来自 Content Script 或 SidePanel 的内部消息
+// 接收内部消息
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'SELECTION_CHANGED') {
     lastSelectedText = msg.text;

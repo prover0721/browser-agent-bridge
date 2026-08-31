@@ -26,7 +26,14 @@ export class WebSocketBridge {
 
       ws.on('message', (data: Buffer | string) => {
         try {
-          const response: BridgeCommandResponse = JSON.parse(data.toString());
+          const msg = JSON.parse(data.toString());
+          // 忽略心跳保活包
+          if (msg.type === 'PING') {
+            ws.send(JSON.stringify({ type: 'PONG' }));
+            return;
+          }
+
+          const response: BridgeCommandResponse = msg;
           const pending = this.pendingRequests.get(response.id);
           if (pending) {
             clearTimeout(pending.timer);
