@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Browser Agent Dashboard</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div class="header">
+    <div class="logo">
+      <span class="icon">⚡</span>
+      <span class="title">Browser Agent</span>
+    </div>
+    <div id="statusBadge" class="badge disconnected">
+      <span class="dot"></span>
+      <span class="text">未连接</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">桥接服务连接配置</div>
+    <div class="form-row">
+      <label for="portInput">本地端口 (WS):</label>
+      <input type="number" id="portInput" value="3088" min="1024" max="65535">
+      <button id="btnReconnect" class="btn btn-primary">重新连接</button>
+    </div>
+    <div class="hint">默认地址: ws://127.0.0.1:3088/ws</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">当前受控网页</div>
+    <div id="tabContainer" class="tab-info">
+      <div id="tabFavicon" class="tab-icon">🌐</div>
+      <div class="tab-details">
+        <div id="tabTitle" class="tab-title">加载中...</div>
+        <div id="tabUrl" class="tab-url">about:blank</div>
+      </div>
+    </div>
+    <div class="action-buttons">
+      <button id="btnSnapshot" class="btn btn-secondary">预览页面快照 (DOM)</button>
+    </div>
+  </div>
+
+  <div class="card" id="selectionCard">
+    <div class="card-title">网页划词快捷引用</div>
+    <div id="selectionText" class="selection-box">在网页中选中任意文本，将在此处同步显示...</div>
+    <button id="btnCopyQuote" class="btn btn-secondary">复制为 AI 引用文本</button>
+  </div>
+
+  <div class="card log-card">
+    <div class="card-title">
+      <span>AI 指令执行审计日志</span>
+      <button id="btnClearLogs" class="btn-text">清空</button>
+    </div>
+    <div id="auditLogs" class="log-container">
+      <div class="log-empty">暂无执行记录</div>
+    </div>
+  </div>
+
+  <!-- 快照弹窗 -->
+  <div id="snapshotModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span>当前页面结构化快照</span>
+        <button id="btnCloseModal" class="btn-close">&times;</button>
+      </div>
+      <pre id="snapshotContent" class="snapshot-pre"></pre>
+    </div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>
