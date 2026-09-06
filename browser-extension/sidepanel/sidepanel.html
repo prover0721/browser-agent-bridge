@@ -29,7 +29,10 @@
   </div>
 
   <div class="card">
-    <div class="card-title">当前受控网页</div>
+    <div class="card-title">
+      <span>当前受控网页</span>
+      <span id="lockBadge" class="mode-badge follow">👀 跟随前台</span>
+    </div>
     <div id="tabContainer" class="tab-info">
       <div id="tabFavicon" class="tab-icon">🌐</div>
       <div class="tab-details">
@@ -37,7 +40,8 @@
         <div id="tabUrl" class="tab-url">about:blank</div>
       </div>
     </div>
-    <div class="action-buttons">
+    <div class="action-buttons-row">
+      <button id="btnToggleLock" class="btn btn-secondary">📌 锁定当前页为后台工作区</button>
       <button id="btnSnapshot" class="btn btn-secondary">预览页面快照 (DOM)</button>
     </div>
   </div>
