@@ -36,7 +36,7 @@ const TOOLS = [
     },
     {
         name: 'browser_create_tab',
-        description: '在浏览器中创建一个全新的网页标签页。默认在后台静默打开（不抢占用户前台屏幕），并自动锁定为 AI 的专属后台工作区。',
+        description: '【首选打开新网址工具】在浏览器中创建一个全新的网页标签页。默认在后台静默打开（active: false，绝不抢占或覆盖用户当前前台正在使用的页面），并自动锁定为 AI 的专属后台工作区。',
         inputSchema: {
             type: 'object',
             properties: {
@@ -46,7 +46,7 @@ const TOOLS = [
                 },
                 active: {
                     type: 'boolean',
-                    description: '是否直接切换到前台显示，默认为 false（即在后台静默运行，不打扰用户）',
+                    description: '是否直接切换到前台显示，默认为 false（即在后台静默运行，绝对不打扰用户）',
                 },
                 auto_bind: {
                     type: 'boolean',
@@ -226,7 +226,7 @@ const TOOLS = [
     },
     {
         name: 'browser_navigate',
-        description: '在受控标签页中导航跳转至指定的网址 URL。',
+        description: '在【已锁定的专属后台标签页】或【指定的 tab_id 页面】中导航跳转至指定的网址 URL。注意：严禁覆盖用户当前正在前台浏览/使用的页面！若需打开全新网址，必须优先调用 browser_create_tab(active: false)。',
         inputSchema: {
             type: 'object',
             properties: {
