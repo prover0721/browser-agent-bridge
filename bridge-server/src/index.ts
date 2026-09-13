@@ -1,4 +1,4 @@
-// index.ts - Main MCP Server Entry (Multi-Tab & Background Automation)
+// index.ts - Main MCP Server Entry (v1.2.0 Dedicated Window Isolation)
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -19,7 +19,7 @@ bridge.start();
 const server = new Server(
   {
     name: 'browser-agent-bridge',
-    version: '1.1.0',
+    version: '1.2.0',
   },
   {
     capabilities: {
@@ -30,10 +30,28 @@ const server = new Server(
 
 // 定义暴露给 AI 的标准浏览器操作工具集
 const TOOLS: Tool[] = [
-  // ── 1. 标签页发现与多任务管理 ──
+  // ── 1. 窗口与多标签页隔离管理 ──
   {
-    name: 'browser_list_tabs',
-    description: '获取当前浏览器中所有已打开的标签页列表（包含每个标签页的 ID、标题、URL、是否处于活动状态、是否已被锁定为后台工作区）。',
+    name: 'browser_create_window',
+    description: '创建一个独立的 AI 专属浏览器窗口（与用户的主窗口彻底物理隔离，绝不打乱用户主窗口的标签页数量和位置）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: '可选：初始打开的目标网址（默认为 "https://www.bing.com"）',
+        },
+        focused: {
+          type: 'boolean',
+          description: '是否抢占屏幕前台焦点，默认为 false（即在后台静默运行，不打扰用户）',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'browser_close_window',
+    description: '任务完成后一键关闭整个 AI 专属独立工作窗口，彻底清理所有临时任务网页，不留痕迹。',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -42,7 +60,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'browser_create_tab',
-    description: '【首选打开新网址工具】在浏览器中创建一个全新的网页标签页。默认在后台静默打开（active: false，绝不抢占或覆盖用户当前前台正在使用的页面），并自动锁定为 AI 的专属后台工作区。',
+    description: '【打开新网页首选】在浏览器中创建一个全新的网页标签页。默认 isolate_window: true 会自动放入【AI 专属独立窗口】中，绝不在用户主窗口中新增标签页，实现零干扰。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -54,12 +72,25 @@ const TOOLS: Tool[] = [
           type: 'boolean',
           description: '是否直接切换到前台显示，默认为 false（即在后台静默运行，绝对不打扰用户）',
         },
+        isolate_window: {
+          type: 'boolean',
+          description: '是否放入 AI 专属独立窗口隔离运行，默认为 true（强力推荐保持 true，保护用户主窗口）',
+        },
         auto_bind: {
           type: 'boolean',
           description: '是否自动将此新标签页锁定为 AI 后续指令的专属执行区，默认为 true',
         },
       },
       required: ['url'],
+    },
+  },
+  {
+    name: 'browser_list_tabs',
+    description: '获取当前浏览器中所有已打开的标签页列表（包含每个标签页的 ID、窗口 ID、是否属于 AI 专属窗口、标题、URL、是否处于活动状态、是否已被锁定为后台工作区）。',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
     },
   },
   {
@@ -102,7 +133,7 @@ const TOOLS: Tool[] = [
   // ── 2. 页面感知与信息提取 ──
   {
     name: 'browser_get_active_tab',
-    description: '获取当前受控标签页（优先返回锁定的后台标签页，若未锁定则返回前台活动标签页）的 URL、标题和运行模式。',
+    description: '获取当前受控标签页（优先返回锁定的后台标签页，若未锁定则返回前台活动标签页）的 URL、标题、窗口 ID 和运行模式。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -150,7 +181,7 @@ const TOOLS: Tool[] = [
   // ── 3. 页面交互与控制 ──
   {
     name: 'browser_click',
-    description: '点击指定数字编号的网页元素（如按钮、链接、选项卡等）。支持静默在后台标签页中点击。',
+    description: '点击指定数字编号的网页元素（如按钮、链接、选项卡等）。支持静默在后台/专属窗口中点击。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -168,7 +199,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'browser_type',
-    description: '在指定数字编号的输入框或文本域中填入文本内容，并自动触发前端事件更新。支持在后台标签页中静默填表。',
+    description: '在指定数字编号的输入框或文本域中填入文本内容，并自动触发前端事件更新。支持在专属窗口/后台中静默填表。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -212,7 +243,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'browser_scroll',
-    description: '控制网页上下滚动或直接跳转至顶部/底部。支持在后台标签页中静默滚动。',
+    description: '控制网页上下滚动或直接跳转至顶部/底部。支持在专属窗口中静默滚动。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -310,7 +341,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.1.0 Multi-Tab) started successfully over stdio.');
+  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.2.0 Dedicated Window Isolation) started successfully over stdio.');
 }
 
 main().catch((err) => {

@@ -1,9 +1,10 @@
-// background.js - Browser Agent Background Service Worker (Multi-Tab & Background Pinning)
+// background.js - Browser Agent Background Service Worker (Multi-Tab & Dedicated AI Window Isolation)
 let socket = null;
 let currentPort = 3088;
 let lastSelectedText = '';
 let activeControlledTab = null;
-let boundTabId = null; // 锁定的专属后台工作 Tab ID
+let boundTabId = null;   // 锁定的专属后台工作 Tab ID
+let aiWindowId = null;   // AI 专属独立工作窗口 ID（与用户主窗口彻底物理隔离）
 
 // 从 storage 加载配置端口
 chrome.storage.local.get(['bridgePort'], (res) => {
@@ -94,6 +95,38 @@ function connectBridge() {
 }
 
 /**
+ * 确保或创建 AI 专属独立工作窗口（绝对不往用户主窗口中塞入标签页）
+ */
+async function ensureAiWindow(url, makeActive = false) {
+  if (aiWindowId) {
+    try {
+      const win = await chrome.windows.get(aiWindowId, { populate: true });
+      if (win) {
+        // 在已有的 AI 专属窗口中打开新标签页
+        const newTab = await chrome.tabs.create({
+          windowId: aiWindowId,
+          url,
+          active: makeActive
+        });
+        return { tab: newTab, isNewWindow: false, windowId: aiWindowId };
+      }
+    } catch (e) {
+      aiWindowId = null;
+    }
+  }
+
+  // 创建全新的 AI 专属独立窗口（focused: makeActive，默认 false，不抢夺用户焦点）
+  const newWin = await chrome.windows.create({
+    url,
+    focused: makeActive,
+    state: 'normal'
+  });
+  aiWindowId = newWin.id;
+  const newTab = newWin.tabs && newWin.tabs[0] ? newWin.tabs[0] : (await chrome.tabs.query({ windowId: newWin.id }))[0];
+  return { tab: newTab, isNewWindow: true, windowId: newWin.id };
+}
+
+/**
  * 获取当前目标受控标签页（优先使用显式指定的 tab_id，其次使用锁定的 boundTabId，最后 fallback 到当前前台活动 Tab）
  */
 async function resolveTargetTab(requestedTabId) {
@@ -111,7 +144,6 @@ async function resolveTargetTab(requestedTabId) {
       const tab = await chrome.tabs.get(boundTabId);
       if (tab) return tab;
     } catch (e) {
-      // 锁定的 Tab 已被用户关闭，自动解锁
       boundTabId = null;
       notifySidePanel({ type: 'TAB_LOCK_CHANGED', boundTabId: null });
     }
@@ -148,13 +180,50 @@ async function ensureContentScriptInjected(tabId) {
  * 处理来自 Bridge Server 的指令
  */
 async function handleBridgeCommand(method, params) {
-  // 1. 多标签页管理类命令
+  // ── 1. 窗口与多标签页管理类命令 ──
+  if (method === 'browser_create_window') {
+    let url = params.url || 'https://www.bing.com';
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    const makeActive = params.focused === true;
+    const { tab, windowId } = await ensureAiWindow(url, makeActive);
+    
+    boundTabId = tab.id;
+    notifySidePanel({ type: 'TAB_LOCK_CHANGED', boundTabId: tab.id });
+    await new Promise((r) => setTimeout(r, 1500));
+
+    return {
+      result: {
+        window_id: windowId,
+        tab_id: tab.id,
+        url,
+        message: `已创建/获取 AI 专属独立工作窗口 (Window ID: ${windowId}, Tab ID: ${tab.id})，绝不干扰用户主窗口！`
+      }
+    };
+  }
+
+  if (method === 'browser_close_window') {
+    if (aiWindowId) {
+      const winId = aiWindowId;
+      try {
+        await chrome.windows.remove(winId);
+      } catch (e) {}
+      aiWindowId = null;
+      boundTabId = null;
+      notifySidePanel({ type: 'TAB_LOCK_CHANGED', boundTabId: null });
+      broadcastActiveTabInfo();
+      return { result: { message: `已成功关闭 AI 专属工作窗口 (Window ID: ${winId})，清理完毕！` } };
+    }
+    return { result: { message: '当前没有活动的 AI 专属工作窗口。' } };
+  }
+
   if (method === 'browser_list_tabs') {
     const tabs = await chrome.tabs.query({});
     const safeTabs = tabs
       .filter((t) => t.url && !t.url.startsWith('chrome://') && !t.url.startsWith('edge://'))
       .map((t) => ({
         tab_id: t.id,
+        window_id: t.windowId,
+        is_ai_window: t.windowId === aiWindowId,
         title: t.title,
         url: t.url,
         active: t.active,
@@ -169,25 +238,41 @@ async function handleBridgeCommand(method, params) {
     let url = params.url;
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
 
-    // 默认在后台静默打开（active: false），不干扰用户前台操作
     const makeActive = params.active === true;
-    const newTab = await chrome.tabs.create({ url, active: makeActive });
+    const isolateWindow = params.isolate_window !== false; // 默认隔离到 AI 专属独立窗口
 
-    if (params.auto_bind !== false) {
+    let newTab = null;
+    let targetWinId = null;
+
+    if (isolateWindow) {
+      // 核心隔离逻辑：使用独立专属窗口，不污染用户主窗口
+      const res = await ensureAiWindow(url, makeActive);
+      newTab = res.tab;
+      targetWinId = res.windowId;
+    } else {
+      // 允许在当前窗口打开
+      newTab = await chrome.tabs.create({ url, active: makeActive });
+      targetWinId = newTab.windowId;
+    }
+
+    if (params.auto_bind !== false && newTab) {
       boundTabId = newTab.id;
       notifySidePanel({ type: 'TAB_LOCK_CHANGED', boundTabId: newTab.id });
     }
 
-    // 等待初始加载
     await new Promise((r) => setTimeout(r, 1500));
 
     return {
       result: {
         tab_id: newTab.id,
+        window_id: targetWinId,
+        is_ai_window: targetWinId === aiWindowId,
         url: newTab.url || url,
         title: newTab.title,
         is_bound: boundTabId === newTab.id,
-        message: `已在${makeActive ? '前台' : '后台'}成功创建新标签页 (ID: ${newTab.id})`
+        message: isolateWindow
+          ? `已在【AI 专属独立窗口】中静默打开页面 (Tab: ${newTab.id}, Win: ${targetWinId})，用户主窗口未受任何影响。`
+          : `已成功创建新标签页 (ID: ${newTab.id})`
       }
     };
   }
@@ -204,7 +289,7 @@ async function handleBridgeCommand(method, params) {
           bound_tab_id: tab.id,
           title: tab.title,
           url: tab.url,
-          message: `已成功锁定标签页 [ID: ${tab.id}] "${tab.title}"。后续所有操作将在该页面后台持续执行，你切换其他标签页不会打断。`
+          message: `已成功锁定标签页 [ID: ${tab.id}] "${tab.title}"。后续操作将在该后台页面持续执行。`
         }
       };
     } catch (e) {
@@ -219,7 +304,7 @@ async function handleBridgeCommand(method, params) {
     broadcastActiveTabInfo();
     return {
       result: {
-        message: `已解除标签页锁定 (原 ID: ${oldId})。现在已恢复自动跟随前台活动标签页。`
+        message: `已解除标签页锁定 (原 ID: ${oldId})。现在已恢复自动跟随模式。`
       }
     };
   }
@@ -236,7 +321,7 @@ async function handleBridgeCommand(method, params) {
     return { result: { message: `已关闭标签页 [ID: ${closedId}] "${targetTab.title}"` } };
   }
 
-  // 2. 页面级信息与跳转命令
+  // ── 2. 页面级信息与跳转命令 ──
   const targetTab = await resolveTargetTab(params.tab_id);
   if (!targetTab || !targetTab.id) {
     return { error: '当前没有可用的浏览器标签页，请先打开一个网页。' };
@@ -246,6 +331,8 @@ async function handleBridgeCommand(method, params) {
     return {
       result: {
         tab_id: targetTab.id,
+        window_id: targetTab.windowId,
+        is_ai_window: targetTab.windowId === aiWindowId,
         title: targetTab.title,
         url: targetTab.url,
         is_bound: targetTab.id === boundTabId,
@@ -263,7 +350,7 @@ async function handleBridgeCommand(method, params) {
     return { result: { message: `标签页 [${targetTab.id}] 已跳转至: ${url}` } };
   }
 
-  // 3. 派发给 Content Script 的 DOM 操作
+  // ── 3. 派发给 Content Script 的 DOM 操作 ──
   try {
     await ensureContentScriptInjected(targetTab.id);
 
@@ -323,12 +410,15 @@ async function broadcastActiveTabInfo() {
       type: 'TAB_INFO',
       tab: {
         id: targetTab.id,
+        window_id: targetTab.windowId,
+        is_ai_window: targetTab.windowId === aiWindowId,
         title: targetTab.title,
         url: targetTab.url,
         favIconUrl: targetTab.favIconUrl,
         is_bound: targetTab.id === boundTabId
       },
-      boundTabId
+      boundTabId,
+      aiWindowId
     });
   }
 }
@@ -339,6 +429,15 @@ async function broadcastActiveTabInfo() {
 function notifySidePanel(message) {
   chrome.runtime.sendMessage(message).catch(() => {});
 }
+
+// 监听 AI 专属窗口关闭事件
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (windowId === aiWindowId) {
+    aiWindowId = null;
+    boundTabId = null;
+    broadcastActiveTabInfo();
+  }
+});
 
 // 图标点击 -> 打开 SidePanel
 chrome.action.onClicked.addListener(async (tab) => {
@@ -364,7 +463,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       port: currentPort,
       selection: lastSelectedText,
       tab: activeControlledTab,
-      boundTabId
+      boundTabId,
+      aiWindowId
     });
   } else if (msg.type === 'SET_PORT') {
     currentPort = msg.port;
