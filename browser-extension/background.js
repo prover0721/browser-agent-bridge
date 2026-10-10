@@ -309,6 +309,52 @@ async function handleBridgeCommand(method, params) {
     };
   }
 
+  if (method === 'browser_switch_tab') {
+    let targetTab = null;
+    const tabs = await chrome.tabs.query({});
+
+    // 1. 按 tab_id 精确查找
+    if (params.tab_id) {
+      targetTab = tabs.find((t) => t.id === params.tab_id);
+    }
+    // 2. 按 title / keyword 模糊查找
+    else if (params.title || params.keyword) {
+      const kw = (params.title || params.keyword).toLowerCase().trim();
+      targetTab = tabs.find((t) => t.title && t.title.toLowerCase().includes(kw));
+      if (!targetTab) {
+        targetTab = tabs.find((t) => t.url && t.url.toLowerCase().includes(kw));
+      }
+    }
+
+    if (!targetTab) {
+      return { error: `未找到匹配的标签页（查询条件: ${JSON.stringify(params)}）` };
+    }
+
+    // 物理切换浏览器前台显示
+    try {
+      await chrome.windows.update(targetTab.windowId, { focused: true });
+      await chrome.tabs.update(targetTab.id, { active: true });
+    } catch (e) {
+      return { error: `切换标签页失败: ${e.message}` };
+    }
+
+    // 同步更新受控状态与侧边栏
+    activeControlledTab = targetTab;
+    boundTabId = targetTab.id;
+    broadcastActiveTabInfo();
+    await new Promise((r) => setTimeout(r, 600));
+
+    return {
+      result: {
+        tab_id: targetTab.id,
+        window_id: targetTab.windowId,
+        title: targetTab.title,
+        url: targetTab.url,
+        message: `已成功自动将浏览器切换到标签页【${targetTab.title}】！`
+      }
+    };
+  }
+
   if (method === 'browser_close_tab') {
     const targetTab = await resolveTargetTab(params.tab_id);
     if (!targetTab || !targetTab.id) return { error: '未找到要关闭的标签页' };

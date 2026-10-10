@@ -16,7 +16,7 @@ bridge.start();
 // 创建 MCP Server 实例
 const server = new index_js_1.Server({
     name: 'browser-agent-bridge',
-    version: '1.2.0',
+    version: '1.3.0',
 }, {
     capabilities: {
         tools: {},
@@ -107,6 +107,28 @@ const TOOLS = [
         inputSchema: {
             type: 'object',
             properties: {},
+            required: [],
+        },
+    },
+    {
+        name: 'browser_switch_tab',
+        description: '【自动切换当前标签页】在浏览器中直接将前台活动页面切换到指定的标签页。支持直接按 tab_id 切换，或按标题关键字/网址模糊匹配（例如 title: "物联网平台"、title: "监控页"），AI 可直接自动切换前台网页，绝不需要让用户手动点击！',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                tab_id: {
+                    type: 'number',
+                    description: '可选：要切换到的目标标签页 ID',
+                },
+                title: {
+                    type: 'string',
+                    description: '可选：目标标签页的标题或标题包含的关键字（例如 "物联网平台"、"监控页"）',
+                },
+                keyword: {
+                    type: 'string',
+                    description: '可选：网址或标题模糊搜索关键字',
+                },
+            },
             required: [],
         },
     },
@@ -327,7 +349,7 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
 async function main() {
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.2.0 Dedicated Window Isolation) started successfully over stdio.');
+    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.3.0 Auto Tab Switch) started successfully over stdio.');
 }
 main().catch((err) => {
     console.error('[MCP-Server] Fatal startup error:', err);
