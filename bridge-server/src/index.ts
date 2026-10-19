@@ -375,7 +375,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.3.0 Auto Tab Switch) started successfully over stdio.');
+  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.4.0 Smart Token Pruning) started successfully over stdio.');
 }
 
 main().catch((err) => {

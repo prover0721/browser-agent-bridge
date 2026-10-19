@@ -359,7 +359,7 @@ async function main() {
     setInterval(() => { }, 1000 * 3600); // 维持事件循环，防止独立后台运行时提前退出
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.3.0 Auto Tab Switch) started successfully over stdio.');
+    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.4.0 Smart Token Pruning) started successfully over stdio.');
 }
 main().catch((err) => {
     console.error('[MCP-Server] Fatal startup error:', err);
