@@ -1,8 +1,6 @@
 // sidepanel.js - Side Panel Logic (Multi-Tab & Background Locking)
 document.addEventListener('DOMContentLoaded', () => {
   const statusBadge = document.getElementById('statusBadge');
-  const tokenInput = document.getElementById('tokenInput');
-  chrome.storage.local.get(['bridgeToken'], res => { tokenInput.value = res.bridgeToken || ''; });
   const portInput = document.getElementById('portInput');
   const btnReconnect = document.getElementById('btnReconnect');
   const tabTitle = document.getElementById('tabTitle');
@@ -27,8 +25,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const textSpan = statusBadge.querySelector('.text');
     if (status === 'connected') {
       textSpan.textContent = `已连接 (:${port})`;
-    } else if (status === 'pairing_required') {
-      textSpan.textContent = '需要配对令牌';
     } else if (status === 'connecting') {
       textSpan.textContent = `连接中...`;
     } else {
@@ -114,7 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // 重连按钮
   btnReconnect.addEventListener('click', () => {
     const port = parseInt(portInput.value, 10) || 3088;
-    chrome.runtime.sendMessage({ type: 'SET_PORT', port, token: tokenInput.value.trim() }, res => {
+    chrome.runtime.sendMessage({ type: 'SET_PORT', port }, res => {
       if (!res?.success) { alert(res?.error || '连接配置失败'); return; }
       updateStatus('connecting', port);
     });

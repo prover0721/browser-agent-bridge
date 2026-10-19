@@ -1,27 +1,7 @@
 import { IncomingMessage } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { PendingRequest } from './types';
-
-// Shared by local MCP processes, never stored in the repository or printed.
-export function loadPairingToken(port: number): string {
-  if (process.env.BRIDGE_TOKEN) {
-    if (!/^[a-f0-9]{64}$/i.test(process.env.BRIDGE_TOKEN)) throw new Error('BRIDGE_TOKEN must be 64 hexadecimal characters');
-    return process.env.BRIDGE_TOKEN;
-  }
-  const directory = join(homedir(), '.browser-agent-bridge');
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const path = join(directory, `token-${port}`);
-  try { writeFileSync(path, randomBytes(32).toString('hex'), { flag: 'wx', mode: 0o600 }); }
-  catch (error: any) { if (error.code !== 'EEXIST') throw error; }
-  const token = readFileSync(path, 'utf8').trim();
-  if (!/^[a-f0-9]{64}$/i.test(token)) throw new Error(`Invalid pairing token file: ${path}`);
-  console.error(`[WS-Bridge] Pairing token file: ${path}`);
-  return token;
-}
 
 const METHODS = new Set(['browser_create_window', 'browser_close_window', 'browser_create_tab', 'browser_list_tabs', 'browser_bind_tab', 'browser_unbind_tab', 'browser_switch_tab', 'browser_close_tab', 'browser_get_active_tab', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_navigate', 'browser_get_text']);
 
@@ -35,11 +15,9 @@ export class WebSocketBridge {
   private isMaster = false;
   private isClosing = false;
   private sessionId = randomUUID();
-  private token: string;
 
-  constructor(private port = 3088, token?: string) {
+  constructor(private port = 3088) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid BRIDGE_PORT');
-    this.token = token ?? loadPairingToken(port);
   }
 
   public start(): void {
@@ -48,12 +26,9 @@ export class WebSocketBridge {
       verifyClient: ({ req }: { req: IncomingMessage }) => {
         const path = req.url || '';
         const origin = req.headers.origin;
-        const offered = req.headers['sec-websocket-protocol'];
-        const credential = typeof offered === 'string' ? offered.split(',').map(v => v.trim()).find(v => v.startsWith('bridge.'))?.slice(7) : undefined;
-        const authorized = credential && Buffer.byteLength(credential) === Buffer.byteLength(this.token) && timingSafeEqual(Buffer.from(credential), Buffer.from(this.token));
         // Browser pages cannot use either endpoint. Extension origins are allowed only on /ws.
         const validOrigin = path === '/agent' ? !origin : !!origin && /^chrome-extension:\/\/[a-p]{32}$/.test(origin);
-        return !!authorized && (path === '/agent' || path === '/ws') && validOrigin;
+        return (path === '/agent' || path === '/ws') && validOrigin;
       }
     });
     this.wss = server;
@@ -126,7 +101,7 @@ export class WebSocketBridge {
   }
   private connectAsRelay(): void {
     if (this.isClosing) return;
-    const ws = new WebSocket(`ws://127.0.0.1:${this.port}/agent`, [`bridge.${this.token}`], { maxPayload: 1024 * 1024 });
+    const ws = new WebSocket(`ws://127.0.0.1:${this.port}/agent`, { maxPayload: 1024 * 1024 });
     this.relayWs = ws;
     ws.on('message', data => { try { this.settle(JSON.parse(data.toString())); } catch {} });
     ws.on('error', () => {});

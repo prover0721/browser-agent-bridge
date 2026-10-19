@@ -5,30 +5,29 @@ import { createServer } from 'node:net';
 import { WebSocket } from 'ws';
 import { WebSocketBridge } from '../src/ws-bridge';
 
-const token = 'a'.repeat(64);
 const origin = 'chrome-extension://' + 'a'.repeat(32);
 async function freePort() {
   const server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const port = (server.address() as any).port;
   await new Promise<void>(resolve => server.close(() => resolve())); return port;
 }
-function connect(port: number, path: string, auth = token, pageOrigin?: string) {
-  return new WebSocket(`ws://127.0.0.1:${port}${path}`, [`bridge.${auth}`], { origin: pageOrigin });
+function connect(port: number, path: string, pageOrigin?: string) {
+  return new WebSocket(`ws://127.0.0.1:${port}${path}`, { origin: pageOrigin });
 }
 async function start() {
-  const port = await freePort(); const bridge = new WebSocketBridge(port, token); bridge.start();
+  const port = await freePort(); const bridge = new WebSocketBridge(port); bridge.start();
   await once((bridge as any).wss, 'listening'); return { port, bridge };
 }
 
-test('rejects unpaired clients, webpage origins, agent-prefix paths, and duplicate browsers', async () => {
+test('connects without pairing and rejects webpage origins, invalid paths, and duplicate browsers', async () => {
   const { port, bridge } = await start();
   try {
-    for (const [path, auth, pageOrigin] of [['/agent', 'b'.repeat(64), undefined], ['/agent', token, 'https://evil.example'], ['/ws', token, 'https://evil.example'], ['/agent-extra', token, undefined]]) {
-      const ws = connect(port, path!, auth, pageOrigin);
+    for (const [path, pageOrigin] of [['/agent', 'https://evil.example'], ['/ws', 'https://evil.example'], ['/agent-extra', undefined]]) {
+      const ws = connect(port, path!, pageOrigin);
       await once(ws, 'error'); ws.terminate();
     }
-    const browser = connect(port, '/ws', token, origin); await once(browser, 'open');
-    const duplicate = connect(port, '/ws', token, origin);
+    const browser = connect(port, '/ws', origin); await once(browser, 'open');
+    const duplicate = connect(port, '/ws', origin);
     const closed = once(duplicate, 'close'); await once(duplicate, 'open');
     assert.equal((await closed)[0], 1008);
   } finally { bridge.close(); }
@@ -37,7 +36,7 @@ test('rejects unpaired clients, webpage origins, agent-prefix paths, and duplica
 test('relay IDs and sessions are isolated; disconnect rejects outstanding requests', async () => {
   const { port, bridge } = await start();
   try {
-    const browser = connect(port, '/ws', token, origin); await once(browser, 'open');
+    const browser = connect(port, '/ws', origin); await once(browser, 'open');
     const a = connect(port, '/agent'); const b = connect(port, '/agent');
     await Promise.all([once(a, 'open'), once(b, 'open')]);
     const requests: any[] = [];

@@ -64,7 +64,7 @@ function background() {
   }
   const event = () => ({ addListener() {}, removeListener() {} });
   const chrome = {
-    storage: { session: { get: async () => ({}), set: async () => {} }, local: { get(_: any, cb: any) { cb({ bridgeToken: 'a'.repeat(64) }); }, set() {} } },
+    storage: { session: { get: async () => ({}), set: async () => {} }, local: { get(_: any, cb: any) { cb({}); }, set() {} } },
     tabs: { get: async (id: number) => { if (!tabs.has(id)) throw new Error('missing'); return tabs.get(id); }, query: async () => [tabs.get(1)], remove: async (id: number) => { removed.push(id); }, onActivated: event(), onUpdated: event(), onRemoved: event(), sendMessage: async () => ({ success: true }) },
     windows: { onRemoved: event() }, action: { onClicked: event() }, runtime: { sendMessage: () => Promise.resolve(), onMessage: { addListener(fn: any) { runtimeListener = fn; } } }
   };
@@ -100,7 +100,7 @@ test('sessions retain separate bindings and unbound mutations are refused', asyn
 test('changing ports replaces the open connection and invalid configuration is refused', () => {
   const page = background();
   const old = page.sockets[0];
-  assert.equal(page.ui({ type: 'SET_PORT', port: 4000, token: 'a'.repeat(64) }).success, true);
+  assert.equal(page.ui({ type: 'SET_PORT', port: 4000 }).success, true);
   assert.equal(old.readyState, 3);
   assert.equal(page.sockets.at(-1).url, 'ws://127.0.0.1:4000/ws');
   assert.equal(page.ui({ type: 'SET_PORT', port: 70000, token: 'a'.repeat(64) }).success, false);
@@ -125,4 +125,15 @@ test('navigation readiness waits for completion and times out without claiming s
  assert.equal((await vm.runInContext('waitForTabReady(1, 100)', page.context)).id, 1);
  page.tabs.get(1)!.status = 'loading';
  await assert.rejects(vm.runInContext('waitForTabReady(1, 5)', page.context), /加载超时/);
+});
+
+test('extension automatically connects with empty configuration and accepts original 1.4 commands', async () => {
+  const page = background();
+  assert.equal(page.sockets.length, 1);
+  const socket = page.sockets[0];
+  assert.equal(socket.url, 'ws://127.0.0.1:3088/ws');
+  socket.onmessage({ data: JSON.stringify({ id: 'legacy-1.4', method: 'browser_get_active_tab', params: {} }) });
+  await vm.runInContext('commandQueue', page.context);
+  assert.equal(socket.replies.at(-1).id, 'legacy-1.4');
+  assert.equal(socket.replies.at(-1).result.tab_id, 1);
 });

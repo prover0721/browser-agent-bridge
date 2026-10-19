@@ -1,7 +1,6 @@
 // background.js - Browser Agent Background Service Worker (Multi-Tab & Dedicated AI Window Isolation)
 let socket = null;
 let currentPort = 3088;
-let pairingToken = '';
 const sessions = new Map();
 let commandQueue = Promise.resolve();
 let displayedSessionId = null;
@@ -14,9 +13,8 @@ let boundTabId = null;   // 锁定的专属后台工作 Tab ID
 let aiWindowId = null;   // AI 专属独立工作窗口 ID（与用户主窗口彻底物理隔离）
 
 // 从 storage 加载配置端口
-chrome.storage.local.get(['bridgePort', 'bridgeToken'], (res) => {
+chrome.storage.local.get(['bridgePort'], (res) => {
   if (res.bridgePort) currentPort = res.bridgePort;
-  pairingToken = res.bridgeToken || '';
   connectBridge();
 });
 
@@ -51,12 +49,8 @@ function connectBridge(force = false) {
 
   notifySidePanel({ type: 'STATUS_CHANGE', status: 'connecting', port: currentPort });
 
-  if (!/^[a-f0-9]{64}$/i.test(pairingToken)) {
-    notifySidePanel({ type: 'STATUS_CHANGE', status: 'pairing_required', port: currentPort });
-    return;
-  }
   try {
-    const ws = new WebSocket(`ws://127.0.0.1:${currentPort}/ws`, [`bridge.${pairingToken}`]);
+    const ws = new WebSocket(`ws://127.0.0.1:${currentPort}/ws`);
     socket = ws;
 
     ws.onopen = () => {
@@ -69,7 +63,9 @@ function connectBridge(force = false) {
       let msg;
       try { msg = JSON.parse(event.data); } catch { return; }
       if (msg.type === 'PING' || msg.type === 'PONG') return;
-      if (typeof msg.id !== 'string' || typeof msg.method !== 'string' || typeof msg.session_id !== 'string') return;
+      if (typeof msg.id !== 'string' || typeof msg.method !== 'string') return;
+      // Original 1.4 servers do not send session IDs.
+      if (typeof msg.session_id !== 'string') msg.session_id = 'legacy';
       // Serialize commands so another session cannot change global tab context mid-await.
       commandQueue = commandQueue.catch(() => {}).then(async () => {
         await restoredSessions;
@@ -559,13 +555,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       aiWindowId
     });
   } else if (msg.type === 'SET_PORT') {
-    if (!Number.isInteger(msg.port) || msg.port < 1 || msg.port > 65535 || !/^[a-f0-9]{64}$/i.test(msg.token || '')) {
-      sendResponse({ success: false, error: '请输入有效端口和 64 位配对令牌' });
+    if (!Number.isInteger(msg.port) || msg.port < 1 || msg.port > 65535) {
+      sendResponse({ success: false, error: '请输入有效端口（1–65535）' });
       return false;
     }
     currentPort = msg.port;
-    pairingToken = msg.token;
-    chrome.storage.local.set({ bridgePort: currentPort, bridgeToken: pairingToken });
+    chrome.storage.local.set({ bridgePort: currentPort });
     connectBridge(true);
     sendResponse({ success: true });
   } else if (msg.type === 'RECONNECT') {

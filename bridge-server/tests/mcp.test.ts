@@ -11,8 +11,7 @@ test('MCP advertises snapshot revisions, validates arguments and forwards them t
   const probe = createServer(); probe.listen(0, '127.0.0.1'); await once(probe, 'listening');
   const port = (probe.address() as any).port;
   await new Promise<void>(resolve => probe.close(() => resolve()));
-  const token = 'c'.repeat(64);
-  const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('../dist/index.js', import.meta.url))], env: { ...process.env as Record<string, string>, BRIDGE_PORT: String(port), BRIDGE_TOKEN: token }, stderr: 'pipe' });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('../dist/index.js', import.meta.url))], env: { ...process.env as Record<string, string>, BRIDGE_PORT: String(port) }, stderr: 'pipe' });
   const client = new Client({ name: 'bridge-test', version: '1.0.0' });
   let browser: WebSocket | undefined;
   try {
@@ -22,7 +21,7 @@ test('MCP advertises snapshot revisions, validates arguments and forwards them t
     for (const [name, args] of [['browser_type', { element_id: 1 }], ['browser_click', { element_id: -1 }], ['browser_wait', { seconds: -1 }], ['browser_click', { element_id: 'wrong' }], ['browser_list_tabs', { unexpected: true }]] as const) {
       const result = await client.callTool({ name, arguments: args }); assert.equal(result.isError, true);
     }
-    browser = new WebSocket(`ws://127.0.0.1:${port}/ws`, [`bridge.${token}`], { origin: 'chrome-extension://' + 'a'.repeat(32) });
+    browser = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: 'chrome-extension://' + 'a'.repeat(32) });
     await once(browser, 'open');
     const request = once(browser, 'message');
     const resultPromise = client.callTool({ name: 'browser_type', arguments: { tab_id: 7, element_id: 3, snapshot_id: 'revision', text: 'example' } });

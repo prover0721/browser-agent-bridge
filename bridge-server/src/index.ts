@@ -19,7 +19,7 @@ bridge.start();
 const server = new Server(
   {
     name: 'browser-agent-bridge',
-    version: '1.5.0',
+    version: '1.4.1',
   },
   {
     capabilities: {
@@ -395,7 +395,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.5.0 Authenticated Sessions) started successfully over stdio.');
+  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.4.1 Automatic Connection & Reliability) started successfully over stdio.');
 }
 
 main().catch((err) => {
