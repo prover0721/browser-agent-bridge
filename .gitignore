@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Build outputs (optional, can be built via npm run build)
 # dist/
@@ -18,3 +17,6 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+
+# Local pairing credentials
+token-*

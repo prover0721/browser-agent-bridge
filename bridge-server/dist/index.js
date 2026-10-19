@@ -10,13 +10,13 @@ const types_js_1 = require("@modelcontextprotocol/sdk/types.js");
 const ws_bridge_1 = require("./ws-bridge");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
-const port = parseInt(process.env.BRIDGE_PORT || '3088', 10);
+const port = Number(process.env.BRIDGE_PORT || '3088');
 const bridge = new ws_bridge_1.WebSocketBridge(port);
 bridge.start();
 // 创建 MCP Server 实例
 const server = new index_js_1.Server({
     name: 'browser-agent-bridge',
-    version: '1.4.0',
+    version: '1.5.0',
 }, {
     capabilities: {
         tools: {},
@@ -188,6 +188,7 @@ const TOOLS = [
         inputSchema: {
             type: 'object',
             properties: {
+                snapshot_id: { type: 'string', description: '快照返回的 Snapshot ID，用于拒绝过期操作' },
                 element_id: {
                     type: 'number',
                     description: '可选：目标元素的数字编号 ID',
@@ -206,6 +207,7 @@ const TOOLS = [
         inputSchema: {
             type: 'object',
             properties: {
+                snapshot_id: { type: 'string', description: 'Snapshot ID from browser_snapshot; stale revisions are rejected' },
                 element_id: {
                     type: 'number',
                     description: '目标元素的编号（由 browser_snapshot 返回的数字 ID，如 1、2 等）',
@@ -224,6 +226,7 @@ const TOOLS = [
         inputSchema: {
             type: 'object',
             properties: {
+                snapshot_id: { type: 'string', description: 'Snapshot ID from browser_snapshot; stale revisions are rejected' },
                 element_id: {
                     type: 'number',
                     description: '目标输入框的数字编号 ID',
@@ -326,8 +329,33 @@ server.setRequestHandler(types_js_1.ListToolsRequestSchema, async () => {
 server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
+        const tool = TOOLS.find(tool => tool.name === name);
+        if (!tool)
+            throw new Error('Unknown tool');
+        for (const field of (tool.inputSchema.required || [])) {
+            if (args?.[field] === undefined)
+                throw new Error(`Missing argument: ${field}`);
+        }
+        const properties = tool.inputSchema.properties || {};
+        for (const [key, value] of Object.entries(args || {})) {
+            const schema = properties[key];
+            if (!schema)
+                throw new Error(`Unknown argument: ${key}`);
+            if (schema.type && typeof value !== schema.type)
+                throw new Error(`Invalid argument type: ${key}`);
+            if (schema.enum && !schema.enum.includes(value))
+                throw new Error(`Invalid argument: ${key}`);
+            if (typeof value === 'number' && !Number.isFinite(value))
+                throw new Error(`Invalid number: ${key}`);
+            if (['tab_id', 'element_id', 'max_elements'].includes(key) && (!Number.isInteger(value) || Number(value) < 1))
+                throw new Error(`Expected positive integer: ${key}`);
+            if (typeof value === 'string' && value.length > 100000)
+                throw new Error(`Argument too long: ${key}`);
+        }
         if (name === 'browser_wait') {
-            const seconds = args?.seconds || 1;
+            const seconds = Number(args?.seconds);
+            if (!Number.isFinite(seconds) || seconds < 0 || seconds > 30)
+                throw new Error('seconds must be between 0 and 30');
             await new Promise((r) => setTimeout(r, seconds * 1000));
             return {
                 content: [{ type: 'text', text: `已等待 ${seconds} 秒。` }],
@@ -355,11 +383,13 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
 });
 // 启动 Stdio 传输层与 Agent 连接
 async function main() {
-    process.stdin.resume();
-    setInterval(() => { }, 1000 * 3600); // 维持事件循环，防止独立后台运行时提前退出
+    server.onclose = () => { if (process.env.BRIDGE_DAEMON !== '1')
+        bridge.close(); };
+    process.once('SIGINT', () => { bridge.close(); process.exit(0); });
+    process.once('SIGTERM', () => { bridge.close(); process.exit(0); });
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.4.0 Smart Token Pruning) started successfully over stdio.');
+    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.5.0 Authenticated Sessions) started successfully over stdio.');
 }
 main().catch((err) => {
     console.error('[MCP-Server] Fatal startup error:', err);

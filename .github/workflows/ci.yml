@@ -1,0 +1,22 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: bridge-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: bridge-server/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: git diff --exit-code --ignore-space-at-eol -- dist

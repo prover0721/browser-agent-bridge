@@ -1,280 +1,220 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.WebSocketBridge = void 0;
-// ws-bridge.ts - Dual-Mode (Master / Relay) WebSocket Bridge Server
+exports.loadPairingToken = loadPairingToken;
 const ws_1 = require("ws");
-const crypto_1 = require("crypto");
+const node_crypto_1 = require("node:crypto");
+const node_fs_1 = require("node:fs");
+const node_os_1 = require("node:os");
+const node_path_1 = require("node:path");
+// Shared by local MCP processes, never stored in the repository or printed.
+function loadPairingToken(port) {
+    if (process.env.BRIDGE_TOKEN) {
+        if (!/^[a-f0-9]{64}$/i.test(process.env.BRIDGE_TOKEN))
+            throw new Error('BRIDGE_TOKEN must be 64 hexadecimal characters');
+        return process.env.BRIDGE_TOKEN;
+    }
+    const directory = (0, node_path_1.join)((0, node_os_1.homedir)(), '.browser-agent-bridge');
+    (0, node_fs_1.mkdirSync)(directory, { recursive: true, mode: 0o700 });
+    const path = (0, node_path_1.join)(directory, `token-${port}`);
+    try {
+        (0, node_fs_1.writeFileSync)(path, (0, node_crypto_1.randomBytes)(32).toString('hex'), { flag: 'wx', mode: 0o600 });
+    }
+    catch (error) {
+        if (error.code !== 'EEXIST')
+            throw error;
+    }
+    const token = (0, node_fs_1.readFileSync)(path, 'utf8').trim();
+    if (!/^[a-f0-9]{64}$/i.test(token))
+        throw new Error(`Invalid pairing token file: ${path}`);
+    console.error(`[WS-Bridge] Pairing token file: ${path}`);
+    return token;
+}
+const METHODS = new Set(['browser_create_window', 'browser_close_window', 'browser_create_tab', 'browser_list_tabs', 'browser_bind_tab', 'browser_unbind_tab', 'browser_switch_tab', 'browser_close_tab', 'browser_get_active_tab', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_navigate', 'browser_get_text']);
 class WebSocketBridge {
+    port;
     wss = null;
     browserClient = null;
-    agentClients = new Set();
-    relayRequestOrigins = new Map();
-    pendingRequests = new Map();
-    port;
-    isMaster = false;
     relayWs = null;
+    pendingRequests = new Map();
+    routes = new Map();
     reconnectTimer = null;
+    isMaster = false;
     isClosing = false;
-    constructor(port = 3088) {
+    sessionId = (0, node_crypto_1.randomUUID)();
+    token;
+    constructor(port = 3088, token) {
         this.port = port;
+        if (!Number.isInteger(port) || port < 1 || port > 65535)
+            throw new Error('Invalid BRIDGE_PORT');
+        this.token = token ?? loadPairingToken(port);
     }
-    /**
-     * 启动服务（尝试以 Master 模式绑定端口；若已被占用则自动作为 Relay Client 接入）
-     */
     start() {
-        try {
-            const server = new ws_1.WebSocketServer({ port: this.port, host: '127.0.0.1' });
-            server.on('error', (err) => {
-                if (err.code === 'EADDRINUSE') {
-                    console.error(`[WS-Bridge] 端口 ${this.port} 已被占用，自动切换为 Agent 中继客户端模式 (Relay Mode)...`);
-                    this.isMaster = false;
+        const server = new ws_1.WebSocketServer({
+            port: this.port, host: '127.0.0.1', maxPayload: 1024 * 1024,
+            verifyClient: ({ req }) => {
+                const path = req.url || '';
+                const origin = req.headers.origin;
+                const offered = req.headers['sec-websocket-protocol'];
+                const credential = typeof offered === 'string' ? offered.split(',').map(v => v.trim()).find(v => v.startsWith('bridge.'))?.slice(7) : undefined;
+                const authorized = credential && Buffer.byteLength(credential) === Buffer.byteLength(this.token) && (0, node_crypto_1.timingSafeEqual)(Buffer.from(credential), Buffer.from(this.token));
+                // Browser pages cannot use either endpoint. Extension origins are allowed only on /ws.
+                const validOrigin = path === '/agent' ? !origin : !!origin && /^chrome-extension:\/\/[a-p]{32}$/.test(origin);
+                return !!authorized && (path === '/agent' || path === '/ws') && validOrigin;
+            }
+        });
+        this.wss = server;
+        server.on('listening', () => { this.isMaster = true; console.error(`[WS-Bridge] Listening on 127.0.0.1:${this.port}`); });
+        server.on('error', (error) => {
+            if (error.code === 'EADDRINUSE') {
+                this.wss = null;
+                server.close();
+                this.connectAsRelay();
+            }
+            else
+                console.error('[WS-Bridge] Server error:', error.message);
+        });
+        server.on('connection', (ws, req) => {
+            if (req.url === '/agent') {
+                const sessionId = (0, node_crypto_1.randomUUID)();
+                ws.on('message', data => {
+                    let msg;
                     try {
-                        server.close();
+                        msg = JSON.parse(data.toString());
+                        if (msg.type === 'PING') {
+                            ws.send(JSON.stringify({ type: 'PONG' }));
+                            return;
+                        }
+                        if (typeof msg.id !== 'string' || !METHODS.has(msg.method) || !msg.params || typeof msg.params !== 'object' || Array.isArray(msg.params))
+                            throw new Error('Invalid command');
+                        if (!this.browserClient || this.browserClient.readyState !== ws_1.WebSocket.OPEN)
+                            throw new Error('Browser extension is not connected');
+                        if (this.routes.size >= 1000)
+                            throw new Error('Too many pending commands');
+                        const id = (0, node_crypto_1.randomUUID)(); // Never trust IDs or session identities supplied by a relay.
+                        const timer = setTimeout(() => {
+                            this.routes.delete(id);
+                            if (ws.readyState === ws_1.WebSocket.OPEN)
+                                ws.send(JSON.stringify({ id: msg.id, error: 'Browser command timed out' }));
+                        }, 15000);
+                        this.routes.set(id, { client: ws, originalId: msg.id, timer });
+                        this.browserClient.send(JSON.stringify({ id, method: msg.method, params: msg.params, session_id: sessionId, expires_at: Date.now() + 14000 }));
                     }
-                    catch { }
-                    this.wss = null;
-                    this.connectAsRelay();
-                }
-                else {
-                    console.error(`[WS-Bridge] 服务端发生错误:`, err.message);
-                }
-            });
-            server.on('listening', () => {
-                this.isMaster = true;
-                this.wss = server;
-                console.error(`[WS-Bridge] WebSocket Server 作为主服务 (Master) 成功监听 ws://127.0.0.1:${this.port}/ws`);
-            });
-            server.on('connection', (ws, req) => {
-                const url = req.url || '';
-                // 如果是外部 Agent 接入中继
-                if (url.startsWith('/agent')) {
-                    console.error(`[WS-Bridge] 外部 Agent 客户端已接入共享中继通道`);
-                    this.agentClients.add(ws);
-                    ws.on('message', (data) => {
-                        try {
-                            const msg = JSON.parse(data.toString());
-                            if (msg.type === 'PING') {
-                                ws.send(JSON.stringify({ type: 'PONG' }));
-                                return;
-                            }
-                            // 收到外部 Agent 发送的浏览器控制指令，转发给浏览器扩展
-                            if (msg.id && msg.method) {
-                                if (this.browserClient && this.browserClient.readyState === ws_1.WebSocket.OPEN) {
-                                    this.relayRequestOrigins.set(msg.id, ws);
-                                    this.browserClient.send(data.toString());
-                                }
-                                else {
-                                    ws.send(JSON.stringify({
-                                        id: msg.id,
-                                        error: '未检测到已连接的浏览器扩展！请确保：\n' +
-                                            '1. Edge 或 Chrome 浏览器已打开，且已加载 Browser Agent 扩展；\n' +
-                                            '2. 扩展侧边栏或后台连接状态显示已连接 (绿色)。'
-                                    }));
-                                }
-                            }
-                        }
-                        catch (err) {
-                            console.error('[WS-Bridge] 解析 Agent 消息失败:', err.message);
-                        }
-                    });
-                    ws.on('close', () => {
-                        this.agentClients.delete(ws);
-                        // 清理与该 Agent 关联的未完成请求
-                        for (const [id, client] of this.relayRequestOrigins.entries()) {
-                            if (client === ws) {
-                                this.relayRequestOrigins.delete(id);
-                            }
-                        }
-                    });
-                    ws.on('error', () => {
-                        this.agentClients.delete(ws);
-                    });
+                    catch (error) {
+                        if (typeof msg?.id === 'string')
+                            ws.send(JSON.stringify({ id: msg.id, error: error.message }));
+                    }
+                });
+                ws.on('close', () => { for (const [id, route] of this.routes)
+                    if (route.client === ws) {
+                        clearTimeout(route.timer);
+                        this.routes.delete(id);
+                    } });
+            }
+            else {
+                if (this.browserClient?.readyState === ws_1.WebSocket.OPEN) {
+                    ws.close(1008, 'Browser already connected');
                     return;
                 }
-                // 默认连接：浏览器扩展 (Browser Extension)
-                console.error(`[WS-Bridge] 浏览器扩展 (Browser Extension) 已接入主服务`);
                 this.browserClient = ws;
-                ws.on('message', (data) => {
+                ws.on('message', data => {
                     try {
                         const msg = JSON.parse(data.toString());
                         if (msg.type === 'PING') {
                             ws.send(JSON.stringify({ type: 'PONG' }));
                             return;
                         }
-                        const response = msg;
-                        // 1. 如果该请求来自于某个外部 Agent
-                        const originAgent = this.relayRequestOrigins.get(response.id);
-                        if (originAgent) {
-                            this.relayRequestOrigins.delete(response.id);
-                            if (originAgent.readyState === ws_1.WebSocket.OPEN) {
-                                originAgent.send(JSON.stringify(response));
-                            }
-                            return;
+                        const route = this.routes.get(msg.id);
+                        if (route) {
+                            clearTimeout(route.timer);
+                            this.routes.delete(msg.id);
+                            if (route.client.readyState === ws_1.WebSocket.OPEN)
+                                route.client.send(JSON.stringify({ ...msg, id: route.originalId }));
                         }
-                        // 2. 如果该请求来自于 Master 自身的 MCP 工具调用
-                        const pending = this.pendingRequests.get(response.id);
-                        if (pending) {
-                            clearTimeout(pending.timer);
-                            this.pendingRequests.delete(response.id);
-                            if (response.error) {
-                                pending.reject(new Error(response.error));
-                            }
-                            else {
-                                pending.resolve(response.result);
-                            }
-                        }
+                        else
+                            this.settle(msg);
                     }
-                    catch (err) {
-                        console.error('[WS-Bridge] 解析扩展回传消息失败:', err.message);
+                    catch {
+                        console.error('[WS-Bridge] Invalid browser response');
                     }
                 });
                 ws.on('close', () => {
-                    console.error('[WS-Bridge] 浏览器扩展已断开连接');
-                    if (this.browserClient === ws) {
-                        this.browserClient = null;
+                    if (this.browserClient !== ws)
+                        return;
+                    this.browserClient = null;
+                    this.rejectPending('Browser extension disconnected');
+                    for (const route of this.routes.values()) {
+                        clearTimeout(route.timer);
+                        if (route.client.readyState === ws_1.WebSocket.OPEN)
+                            route.client.send(JSON.stringify({ id: route.originalId, error: 'Browser extension disconnected' }));
                     }
-                    // 通知当前所有 pending 请求
-                    for (const [id, pending] of this.pendingRequests) {
-                        clearTimeout(pending.timer);
-                        pending.reject(new Error('浏览器插件连接已断开'));
-                    }
-                    this.pendingRequests.clear();
+                    this.routes.clear();
                 });
-                ws.on('error', (err) => {
-                    console.error('[WS-Bridge] 浏览器扩展连接异常:', err.message);
-                });
-            });
-        }
-        catch (err) {
-            console.error(`[WS-Bridge] 创建服务监听失败:`, err.message);
-            this.connectAsRelay();
-        }
+            }
+            ws.on('error', () => { });
+        });
     }
-    /**
-     * 作为 Relay Client 连接到已存在的主服务
-     */
+    settle(msg) {
+        const pending = this.pendingRequests.get(msg.id);
+        if (!pending)
+            return;
+        clearTimeout(pending.timer);
+        this.pendingRequests.delete(msg.id);
+        if (msg.error)
+            pending.reject(new Error(String(msg.error)));
+        else
+            pending.resolve(msg.result);
+    }
+    rejectPending(message) {
+        for (const pending of this.pendingRequests.values()) {
+            clearTimeout(pending.timer);
+            pending.reject(new Error(message));
+        }
+        this.pendingRequests.clear();
+    }
     connectAsRelay() {
         if (this.isClosing)
             return;
-        try {
-            const ws = new ws_1.WebSocket(`ws://127.0.0.1:${this.port}/agent`);
-            this.relayWs = ws;
-            ws.on('open', () => {
-                console.error(`[WS-Bridge] 成功连接到本地主桥接服务 (ws://127.0.0.1:${this.port}/agent)`);
-            });
-            ws.on('message', (data) => {
-                try {
-                    const response = JSON.parse(data.toString());
-                    if (response.id) {
-                        const pending = this.pendingRequests.get(response.id);
-                        if (pending) {
-                            clearTimeout(pending.timer);
-                            this.pendingRequests.delete(response.id);
-                            if (response.error) {
-                                pending.reject(new Error(response.error));
-                            }
-                            else {
-                                pending.resolve(response.result);
-                            }
-                        }
-                    }
-                }
-                catch (e) {
-                    console.error('[WS-Bridge] 中继消息解析失败:', e.message);
-                }
-            });
-            ws.on('close', () => {
-                if (!this.isClosing) {
-                    console.error('[WS-Bridge] 与本地主桥接服务断开连接，将在 3 秒后尝试重连...');
-                    this.scheduleReconnect();
-                }
-            });
-            ws.on('error', (err) => {
-                console.error('[WS-Bridge] 中继客户端连接错误:', err.message);
-            });
+        const ws = new ws_1.WebSocket(`ws://127.0.0.1:${this.port}/agent`, [`bridge.${this.token}`], { maxPayload: 1024 * 1024 });
+        this.relayWs = ws;
+        ws.on('message', data => { try {
+            this.settle(JSON.parse(data.toString()));
         }
-        catch (e) {
-            this.scheduleReconnect();
-        }
+        catch { } });
+        ws.on('error', () => { });
+        ws.on('close', () => {
+            this.rejectPending('Master bridge disconnected');
+            if (!this.isClosing)
+                this.reconnectTimer = setTimeout(() => this.connectAsRelay(), 3000);
+        });
     }
-    scheduleReconnect() {
-        if (this.reconnectTimer)
-            clearTimeout(this.reconnectTimer);
-        this.reconnectTimer = setTimeout(() => {
-            this.connectAsRelay();
-        }, 3000);
-    }
-    /**
-     * 向浏览器扩展发送指令并等待结果
-     */
     async sendCommand(method, params = {}, timeoutMs = 15000) {
-        const id = (0, crypto_1.randomUUID)();
-        const request = { id, method, params };
-        if (this.isMaster) {
-            if (!this.browserClient || this.browserClient.readyState !== ws_1.WebSocket.OPEN) {
-                throw new Error('未检测到已连接的浏览器扩展！请确保：\n' +
-                    '1. Edge 或 Chrome 浏览器已打开，且已加载 Browser Agent 扩展；\n' +
-                    '2. 扩展侧边栏或后台连接状态显示已连接 (绿色)。');
-            }
-            return new Promise((resolve, reject) => {
-                const timer = setTimeout(() => {
-                    this.pendingRequests.delete(id);
-                    reject(new Error(`指令执行超时 (${timeoutMs}ms): ${method}`));
-                }, timeoutMs);
-                this.pendingRequests.set(id, { resolve, reject, timer });
-                try {
-                    this.browserClient.send(JSON.stringify(request));
-                }
-                catch (err) {
-                    clearTimeout(timer);
-                    this.pendingRequests.delete(id);
-                    reject(new Error(`发送指令失败: ${err.message}`));
-                }
+        if (!METHODS.has(method))
+            throw new Error('Unknown browser command');
+        const client = this.isMaster ? this.browserClient : this.relayWs;
+        if (!client || client.readyState !== ws_1.WebSocket.OPEN)
+            throw new Error('Browser bridge is not connected');
+        const id = (0, node_crypto_1.randomUUID)();
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => { this.pendingRequests.delete(id); reject(new Error(`Command timed out: ${method}`)); }, timeoutMs);
+            this.pendingRequests.set(id, { resolve, reject, timer });
+            client.send(JSON.stringify({ id, method, params, session_id: this.sessionId, expires_at: Date.now() + timeoutMs - 500 }), error => {
+                if (error)
+                    this.settle({ id, error: error.message });
             });
-        }
-        else {
-            // 中继模式 (Relay Mode)
-            if (!this.relayWs || this.relayWs.readyState !== ws_1.WebSocket.OPEN) {
-                throw new Error(`尚未连接到本地主桥接服务 (端口 ${this.port})！请确保主桥接服务或后台程序正在运行。`);
-            }
-            return new Promise((resolve, reject) => {
-                const timer = setTimeout(() => {
-                    this.pendingRequests.delete(id);
-                    reject(new Error(`指令执行超时 (${timeoutMs}ms): ${method}`));
-                }, timeoutMs);
-                this.pendingRequests.set(id, { resolve, reject, timer });
-                try {
-                    this.relayWs.send(JSON.stringify(request));
-                }
-                catch (err) {
-                    clearTimeout(timer);
-                    this.pendingRequests.delete(id);
-                    reject(new Error(`通过中继发送指令失败: ${err.message}`));
-                }
-            });
-        }
+        });
     }
-    /**
-     * 关闭服务
-     */
     close() {
         this.isClosing = true;
         if (this.reconnectTimer)
             clearTimeout(this.reconnectTimer);
-        if (this.relayWs) {
-            try {
-                this.relayWs.close();
-            }
-            catch { }
-            this.relayWs = null;
-        }
-        if (this.wss) {
-            try {
-                this.wss.close();
-            }
-            catch { }
-            this.wss = null;
-        }
+        this.rejectPending('Bridge closed');
+        for (const route of this.routes.values())
+            clearTimeout(route.timer);
+        this.routes.clear();
+        this.relayWs?.terminate();
+        this.wss?.clients.forEach(ws => ws.terminate());
+        this.wss?.close();
     }
 }
 exports.WebSocketBridge = WebSocketBridge;

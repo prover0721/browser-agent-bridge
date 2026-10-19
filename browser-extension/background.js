@@ -1,14 +1,22 @@
 // background.js - Browser Agent Background Service Worker (Multi-Tab & Dedicated AI Window Isolation)
 let socket = null;
 let currentPort = 3088;
+let pairingToken = '';
+const sessions = new Map();
+let commandQueue = Promise.resolve();
+let displayedSessionId = null;
+const restoredSessions = chrome.storage.session.get(['sessions']).then(res => {
+  for (const [id, state] of Object.entries(res.sessions || {})) sessions.set(id, state);
+}).catch(() => {});
 let lastSelectedText = '';
 let activeControlledTab = null;
 let boundTabId = null;   // 锁定的专属后台工作 Tab ID
 let aiWindowId = null;   // AI 专属独立工作窗口 ID（与用户主窗口彻底物理隔离）
 
 // 从 storage 加载配置端口
-chrome.storage.local.get(['bridgePort'], (res) => {
+chrome.storage.local.get(['bridgePort', 'bridgeToken'], (res) => {
   if (res.bridgePort) currentPort = res.bridgePort;
+  pairingToken = res.bridgeToken || '';
   connectBridge();
 });
 
@@ -28,9 +36,9 @@ setInterval(() => {
 /**
  * 建立与本地 MCP 桥接服务的 WebSocket 连接
  */
-function connectBridge() {
+function connectBridge(force = false) {
   if (socket) {
-    if (socket.readyState === WebSocket.OPEN) return;
+    if (!force && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
     try {
       socket.onopen = null;
       socket.onmessage = null;
@@ -43,8 +51,12 @@ function connectBridge() {
 
   notifySidePanel({ type: 'STATUS_CHANGE', status: 'connecting', port: currentPort });
 
+  if (!/^[a-f0-9]{64}$/i.test(pairingToken)) {
+    notifySidePanel({ type: 'STATUS_CHANGE', status: 'pairing_required', port: currentPort });
+    return;
+  }
   try {
-    const ws = new WebSocket(`ws://127.0.0.1:${currentPort}/ws`);
+    const ws = new WebSocket(`ws://127.0.0.1:${currentPort}/ws`, [`bridge.${pairingToken}`]);
     socket = ws;
 
     ws.onopen = () => {
@@ -53,27 +65,33 @@ function connectBridge() {
       broadcastActiveTabInfo();
     };
 
-    ws.onmessage = async (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'PING' || msg.type === 'PONG') return;
-
-        console.log('[BrowserAgent] Received command:', msg);
-        notifySidePanel({ type: 'AUDIT_LOG', log: msg });
-
-        const { id, method, params } = msg;
-        const response = await handleBridgeCommand(method, params || {});
-        
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            id,
-            result: response.result || null,
-            error: response.error || null
-          }));
+    ws.onmessage = (event) => {
+      let msg;
+      try { msg = JSON.parse(event.data); } catch { return; }
+      if (msg.type === 'PING' || msg.type === 'PONG') return;
+      if (typeof msg.id !== 'string' || typeof msg.method !== 'string' || typeof msg.session_id !== 'string') return;
+      // Serialize commands so another session cannot change global tab context mid-await.
+      commandQueue = commandQueue.catch(() => {}).then(async () => {
+        await restoredSessions;
+        displayedSessionId = msg.session_id;
+        const session = sessions.get(msg.session_id) || { boundTabId: null, aiWindowId: null };
+        boundTabId = session.boundTabId;
+        aiWindowId = session.aiWindowId;
+        let response;
+        try {
+          if (msg.expires_at && Date.now() > msg.expires_at) throw new Error('指令已过期，请检查页面后重新操作');
+          // Never log form values, URLs, or credentials.
+          notifySidePanel({ type: 'AUDIT_LOG', log: { method: msg.method, params: { tab_id: msg.params?.tab_id } } });
+          response = await handleBridgeCommand(msg.method, msg.params || {});
+        } catch (error) { response = { error: error.message }; }
+        finally {
+          sessions.set(msg.session_id, { boundTabId, aiWindowId });
+          // Bound memory; expired sessions fail closed because mutations require a binding.
+          if (sessions.size > 256) sessions.delete(sessions.keys().next().value);
+          await chrome.storage.session.set({ sessions: Object.fromEntries(sessions) }).catch(() => {});
         }
-      } catch (err) {
-        console.error('[BrowserAgent] Message processing error:', err);
-      }
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: msg.id, result: response.result ?? null, error: response.error ?? null }));
+      });
     };
 
     ws.onclose = () => {
@@ -97,6 +115,26 @@ function connectBridge() {
 /**
  * 确保或创建 AI 专属独立工作窗口（绝对不往用户主窗口中塞入标签页）
  */
+async function waitForTabReady(tabId, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error, tab) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+      if (error) reject(error); else resolve(tab);
+    };
+    const onUpdated = (id, change, tab) => { if (id === tabId && change.status === 'complete') finish(null, tab); };
+    const onRemoved = id => { if (id === tabId) finish(new Error('等待期间标签页已关闭')); };
+    const timer = setTimeout(() => finish(new Error('页面加载超时，请检查页面后重试')), timeoutMs);
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+    chrome.tabs.get(tabId).then(tab => { if (tab.status === 'complete') finish(null, tab); }, error => finish(error));
+  });
+}
+
 async function ensureAiWindow(url, makeActive = false) {
   if (aiWindowId) {
     try {
@@ -136,6 +174,7 @@ async function resolveTargetTab(requestedTabId) {
       const tab = await chrome.tabs.get(requestedTabId);
       if (tab) return tab;
     } catch (e) {}
+    throw new Error(`目标标签页不存在: ${requestedTabId}`);
   }
 
   // 2. 如果当前有锁定的后台 Tab
@@ -144,8 +183,8 @@ async function resolveTargetTab(requestedTabId) {
       const tab = await chrome.tabs.get(boundTabId);
       if (tab) return tab;
     } catch (e) {
-      boundTabId = null;
-      notifySidePanel({ type: 'TAB_LOCK_CHANGED', boundTabId: null });
+      // Keep the lost binding: mutations must fail until explicitly rebound.
+      throw new Error(`绑定标签页已关闭: ${boundTabId}，请重新绑定`);
     }
   }
 
@@ -158,7 +197,7 @@ async function resolveTargetTab(requestedTabId) {
     }
   } catch (e) {}
 
-  return activeControlledTab;
+  return null;
 }
 
 /**
@@ -189,14 +228,14 @@ async function handleBridgeCommand(method, params) {
     
     boundTabId = tab.id;
     notifySidePanel({ type: 'TAB_LOCK_CHANGED', boundTabId: tab.id });
-    await new Promise((r) => setTimeout(r, 1500));
+    await waitForTabReady(tab.id);
 
     return {
       result: {
         window_id: windowId,
         tab_id: tab.id,
         url,
-        message: `已创建/获取 AI 专属独立工作窗口 (Window ID: ${windowId}, Tab ID: ${tab.id})，绝不干扰用户主窗口！`
+        message: `已创建/获取 AI 专属独立工作窗口 (Window ID: ${windowId}, Tab ID: ${tab.id})，已使用独立工作窗口。`
       }
     };
   }
@@ -206,7 +245,7 @@ async function handleBridgeCommand(method, params) {
       const winId = aiWindowId;
       try {
         await chrome.windows.remove(winId);
-      } catch (e) {}
+      } catch (e) { return { error: `关闭工作窗口失败: ${e.message}` }; }
       aiWindowId = null;
       boundTabId = null;
       notifySidePanel({ type: 'TAB_LOCK_CHANGED', boundTabId: null });
@@ -260,7 +299,7 @@ async function handleBridgeCommand(method, params) {
       notifySidePanel({ type: 'TAB_LOCK_CHANGED', boundTabId: newTab.id });
     }
 
-    await new Promise((r) => setTimeout(r, 1500));
+    await waitForTabReady(newTab.id);
 
     return {
       result: {
@@ -356,6 +395,7 @@ async function handleBridgeCommand(method, params) {
   }
 
   if (method === 'browser_close_tab') {
+    if (!params.tab_id && !boundTabId) return { error: '关闭前请指定 tab_id 或绑定标签页' };
     const targetTab = await resolveTargetTab(params.tab_id);
     if (!targetTab || !targetTab.id) return { error: '未找到要关闭的标签页' };
     const closedId = targetTab.id;
@@ -368,6 +408,8 @@ async function handleBridgeCommand(method, params) {
   }
 
   // ── 2. 页面级信息与跳转命令 ──
+  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll'];
+  if (mutations.includes(method) && !params.tab_id && !boundTabId) return { error: '修改页面前请指定 tab_id 或绑定标签页' };
   const targetTab = await resolveTargetTab(params.tab_id);
   if (!targetTab || !targetTab.id) {
     return { error: '当前没有可用的浏览器标签页，请先打开一个网页。' };
@@ -392,7 +434,7 @@ async function handleBridgeCommand(method, params) {
     let url = params.url;
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
     await chrome.tabs.update(targetTab.id, { url });
-    await new Promise((r) => setTimeout(r, 1200));
+    await waitForTabReady(targetTab.id);
     return { result: { message: `标签页 [${targetTab.id}] 已跳转至: ${url}` } };
   }
 
@@ -413,12 +455,13 @@ async function handleBridgeCommand(method, params) {
         break;
       case 'browser_click':
         action = 'CLICK';
-        payload = { id: params.element_id };
+        payload = { id: params.element_id, snapshot_id: params.snapshot_id };
         break;
       case 'browser_type':
         action = 'TYPE';
         payload = {
           id: params.element_id,
+          snapshot_id: params.snapshot_id,
           text: params.text,
           clearFirst: params.clear_first !== false
         };
@@ -433,7 +476,7 @@ async function handleBridgeCommand(method, params) {
         break;
       case 'browser_get_text':
         action = 'GET_TEXT';
-        payload = { id: params.element_id };
+        payload = { id: params.element_id, snapshot_id: params.snapshot_id };
         break;
       default:
         return { error: `不支持的方法: ${method}` };
@@ -444,7 +487,7 @@ async function handleBridgeCommand(method, params) {
       return { error: response?.error || '操作执行失败' };
     }
 
-    return { result: response.data || response.text || response.message || '操作成功' };
+    return { result: response.data ?? response.text ?? response.message ?? '操作成功' };
   } catch (err) {
     return { error: `执行失败 (${method} on Tab ${targetTab.id}): ${err.message}` };
   }
@@ -454,7 +497,7 @@ async function handleBridgeCommand(method, params) {
  * 广播当前 Tab 详情给 SidePanel
  */
 async function broadcastActiveTabInfo() {
-  const targetTab = await resolveTargetTab();
+  const targetTab = await resolveTargetTab().catch(() => null);
   if (targetTab) {
     notifySidePanel({
       type: 'TAB_INFO',
@@ -484,7 +527,6 @@ function notifySidePanel(message) {
 chrome.windows.onRemoved.addListener((windowId) => {
   if (windowId === aiWindowId) {
     aiWindowId = null;
-    boundTabId = null;
     broadcastActiveTabInfo();
   }
 });
@@ -517,18 +559,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       aiWindowId
     });
   } else if (msg.type === 'SET_PORT') {
+    if (!Number.isInteger(msg.port) || msg.port < 1 || msg.port > 65535 || !/^[a-f0-9]{64}$/i.test(msg.token || '')) {
+      sendResponse({ success: false, error: '请输入有效端口和 64 位配对令牌' });
+      return false;
+    }
     currentPort = msg.port;
-    chrome.storage.local.set({ bridgePort: currentPort });
-    connectBridge();
+    pairingToken = msg.token;
+    chrome.storage.local.set({ bridgePort: currentPort, bridgeToken: pairingToken });
+    connectBridge(true);
     sendResponse({ success: true });
   } else if (msg.type === 'RECONNECT') {
-    connectBridge();
+    connectBridge(true);
     sendResponse({ success: true });
   } else if (msg.type === 'TOGGLE_TAB_LOCK') {
     if (boundTabId) {
       boundTabId = null;
     } else if (activeControlledTab && activeControlledTab.id) {
       boundTabId = activeControlledTab.id;
+    }
+    if (displayedSessionId) {
+      sessions.set(displayedSessionId, { boundTabId, aiWindowId });
+      chrome.storage.session.set({ sessions: Object.fromEntries(sessions) });
     }
     broadcastActiveTabInfo();
     sendResponse({ success: true, boundTabId });

@@ -3,7 +3,7 @@
     "browser_bridge": {
       "command": "node",
       "args": [
-        "d:/ai/antigravity/work/Browser_Agent_Extension_Bridge/bridge-server/dist/index.js"
+        "C:/path/to/browser-agent-bridge/bridge-server/dist/index.js"
       ],
       "env": {
         "BRIDGE_PORT": "3088"

@@ -1,128 +1,91 @@
-# 🌐 Browser Agent Extension & MCP Bridge (v1.3.0)
+# Browser Agent Bridge 1.5.0
 
-**Browser Agent** 是一套专为 AI Agent（如 Antigravity、Claude Code、Cursor 等）打造的**真实浏览器操控扩展（Chrome / Edge MV3）与本地 MCP 桥接服务**。
+通过本地 MCP 服务和 Chrome / Edge MV3 扩展，让 AI 读取网页、管理标签页、点击和填写表单，并复用浏览器现有登录态。
 
-通过**纯文本结构化 DOM 索引、合成事件派发、【AI 专属独立工作窗口隔离】与【自动切换标签页】机制**，让 AI 在**不依赖昂贵、缓慢的视觉截图（Vision）**的前提下，直接操控真实浏览器，完美保留登录态，并实现**“主客分离”（用户主窗口零污染）与“全自动标签页导航”**！
+## 环境要求
 
----
+- Chrome / Edge 116 或更新版本。
+- Node.js 20.19+（20.x）、22.13+（22.x）或 24+；推荐 Node.js 24 LTS。
+- 支持 stdio MCP 的 AI 客户端。
 
-## 🌟 核心特色 (v1.3.0)
+## 安装与配对
 
-1. 🔄 **【全新】自动切换前台标签页（Auto Switch Tab）**：
-   - AI 可以直接命令浏览器**自动切换当前显示的前台标签页**，支持标题关键字模糊匹配（例如直接传 `"物联网平台"`）；
-   - **彻底告别“请您用鼠标轻点一下顶部标签页”的尴尬，AI 全流程自主完成跨页跳转！**
-2. 🪟 **【主客分离】AI 专属独立工作窗口隔离（Dedicated AI Window）**：
-   - AI 打开新网页、搜索、多步跳转时，会自动放入**独立的专属后台窗口**中执行；
-   - **你的主浏览器窗口上方不会增加任何多余的 Tab 标签页，位置、数量完全保持原样，零干扰、零打扰**！
-3. 📌 **后台标签页锁定与静默并发（Tab Pinning）**：
-   - 即使你在前台做自己的事，AI 依然在专属窗口/后台标签页中持续点击、填表、翻页，互不影响。
-4. ⚡ **纯文本结构化 DOM（零截图开销）**：
-   - 毫秒级生成带编号的交互元素树，极低 Token 消耗，无视截图延迟与分辨率偏差。
-5. 🧹 **窗口生命周期管理**：
-   - 支持 `browser_create_window` 与 `browser_close_window`，任务完成后一键销毁后台工作窗口，干净利落。
-6. 🔒 **严密隐私与安全**：
-   - 密码框与支付卡号字段前端自动脱敏为 `••••`，局域网隔离（仅限 127.0.0.1 本地回环）。
+1. 克隆仓库，在 `bridge-server` 目录执行：
 
----
+   ```powershell
+   npm ci
+   npm run build
+   ```
 
-## 📁 项目目录结构
+2. 在 `edge://extensions/` 或 `chrome://extensions/` 开启开发人员模式，加载项目的 `browser-extension` 目录。
+3. 将 MCP 配置中的路径替换为你本机的绝对路径：
 
-```text
-Browser_Agent_Extension_Bridge/
-├── browser-extension/            # 浏览器扩展源码 (Chrome / Edge MV3)
-│   ├── manifest.json             # 扩展清单文件 (v1.2.0)
-│   ├── background.js             # Service Worker (AI 专属独立窗口隔离、WebSocket 连接、保活)
-│   ├── content.js                # DOM 结构化解析、编号打标与事件派发
-│   ├── sidepanel/                # 侧边栏 UI (连接状态、锁定指示、受控 Tab、操作审计日志)
-│   └── icons/                    # 扩展图标
-│
-├── bridge-server/                # 本地 MCP 桥接服务端 (Node.js + TypeScript)
-│   ├── package.json              # 依赖与脚本 (v1.2.0)
-│   ├── tsconfig.json             # TypeScript 配置
-│   ├── src/
-│   │   ├── index.ts              # MCP Server 入口 (暴露 15 个标准工具，包含窗口隔离)
-│   │   ├── ws-bridge.ts          # WebSocket 服务 (ws://127.0.0.1:3088/ws)
-│   │   └── types.ts              # 类型定义
-│   └── dist/                     # 编译输出目录
-│
-├── antigravity_mcp_config.json   # MCP 配置文件示例
-└── README.md                     # 使用说明文档
+   ```json
+   {
+     "mcpServers": {
+       "browser_bridge": {
+         "command": "node",
+         "args": ["C:/path/to/browser-agent-bridge/bridge-server/dist/index.js"],
+         "env": { "BRIDGE_PORT": "3088" }
+       }
+     }
+   }
+   ```
+
+4. 启动 MCP 客户端或项目启动脚本。服务首次启动时自动生成配对令牌：
+   - Windows：`%USERPROFILE%\.browser-agent-bridge\token-3088`
+   - macOS / Linux：`~/.browser-agent-bridge/token-3088`
+5. 用本地文本编辑器打开该文件，将其中的 64 位令牌填入扩展侧栏“配对令牌”，点击“重新连接”。不要把令牌提交到 Git 或发送给其他人。
+
+项目启动脚本设置 `BRIDGE_DAEMON=1`，允许没有 MCP 标准输入的独立后台主服务持续运行。普通 MCP 进程会在客户端关闭时清理连接。多个 MCP 进程使用相同端口时自动共享主服务；默认从同一用户目录读取同一令牌。也可通过 `BRIDGE_TOKEN` 指定 64 位十六进制令牌，此时扩展和所有 MCP 进程必须配置相同值。
+
+**从 1.4 升级：**先停止旧桥接服务，重新安装依赖并构建，再重载扩展、重启 MCP 客户端并完成上述配对。旧协议连接不再被接受。端口被旧版本服务占用时，新服务无法通过认证，请先关闭旧服务。
+
+## 工具与操作规则
+
+| 工具 | 用途 |
+| --- | --- |
+| `browser_get_active_tab` / `browser_list_tabs` | 查看受控页面 / 所有标签页 |
+| `browser_create_window` / `browser_close_window` | 创建 / 关闭当前会话的工作窗口 |
+| `browser_create_tab` / `browser_close_tab` | 创建 / 关闭标签页 |
+| `browser_bind_tab` / `browser_unbind_tab` | 绑定 / 解除当前会话的目标标签页 |
+| `browser_switch_tab` | 按 ID 或标题关键字切换到前台，并绑定页面 |
+| `browser_snapshot` | 获取交互元素编号和 Snapshot ID |
+| `browser_click` / `browser_type` | 点击 / 填写指定元素；可传 `snapshot_id` 校验版本 |
+| `browser_press` / `browser_scroll` | 派发键盘事件 / 滚动页面 |
+| `browser_navigate` | 在指定或已绑定页面导航 |
+| `browser_get_text` | 提取元素文本、划选文本或正文，最多 20,000 字符 |
+| `browser_wait` | 等待 0–30 秒 |
+
+- 读取操作未绑定时跟随前台；修改、导航、滚动和关闭必须提供 `tab_id` 或先绑定页面。
+- 显式目标或绑定目标失效后会报错，不会回退到另一个页面。
+- 每个 MCP 连接拥有独立的绑定和窗口状态。扩展串行执行命令，防止异步操作互相覆盖。侧栏显示最近操作的会话，锁定按钮作用于该会话。
+- 默认在独立后台工作窗口创建新标签页；这是界面上的分离，**仍共享同一浏览器配置和登录态**。
+- 元素编号在同一文档生命周期内不复用；新快照使旧编号失效。建议点击、填写时始终同时传 `tab_id`、`snapshot_id`、`element_id`。
+- 快照默认最多 50 个元素，可通过 `max_elements` 设置 1–500。`viewport_only: false` 仍遵守数量上限。
+- 新建页面和导航等待浏览器加载完成，最多 10 秒；这不代表单页应用的异步业务数据已全部就绪。超时后先读取实际状态，避免重复提交。
+
+## 安全边界与限制
+
+- 服务仅监听 `127.0.0.1`；两类连接都必须提供配对令牌。浏览器网页来源被拒绝，扩展端点只接受扩展来源，已有浏览器连接不会被另一个连接替换。
+- 令牌通过 WebSocket 子协议传递，不放入 URL。默认令牌文件位于用户目录，需保护本机用户账户和文件访问权限。获得令牌的本机进程具有浏览器控制能力。
+- 日志只记录工具名称和目标标签页，不记录输入正文、URL 或令牌；输入成功消息不回显内容。密码、验证码和常见支付字段的快照值会脱敏，正文提取移除表单控件。
+- 自动脱敏不能识别网页所有敏感内容；普通正文、链接、属性和用户主动划选的文字仍可能包含隐私。网页内容应作为不可信数据，不能作为额外操作授权。
+- 点击、输入和键盘使用 DOM 合成事件，不提供真实用户事件保证；Tab、快捷键、文件选择器以及要求可信事件的网站可能不响应。Enter 在表单输入框内使用 `requestSubmit()`，保留表单校验。
+- 当前不支持 iframe、Shadow DOM 和画布内容的完整访问，也不支持截图。扩展系统页、商店页等浏览器受保护页面不可操作。
+- 多会话不会自动合并同一页面的操作意图；两个 Agent 操作同一页时仍应协调。不要让多个 Agent 同时填写同一表单。
+
+## 开发与验证
+
+在 `bridge-server` 目录运行：
+
+```powershell
+npm ci
+npm run build
+npm test
+npm audit
 ```
 
----
+测试覆盖配对与来源校验、连接替换防护、中继请求隔离、断线处理、失效标签页保护、会话绑定、文本域输入、敏感值回显及过期快照。
 
-## 🚀 快速开始使用指南
-
-### 第一步：在 Edge 或 Chrome 浏览器中加载扩展
-
-1. 打开 **Microsoft Edge** 浏览器，访问：
-   ```text
-   edge://extensions/
-   ```
-   *(如果是 Chrome 浏览器，访问 `chrome://extensions/`)*
-2. 开启左侧的 **“开发人员模式”** (Developer mode)。
-3. 点击顶部的 **“加载解压缩的扩展”** (Load unpacked)。
-4. 选择本项目中的 `browser-extension` 文件夹：
-   ```text
-   d:\ai\antigravity\work\Browser_Agent_Extension_Bridge\browser-extension
-   ```
-5. 在浏览器工具栏中将 **Browser Agent** 图标固定，点击即可展开右侧侧边栏。
-
----
-
-### 第二步：配置并接入 Antigravity / AI 编程助手
-
-将本 MCP 服务添加到您的 MCP 配置文件中（如 `mcp_config.json` 或 Claude Desktop）：
-
-```json
-{
-  "mcpServers": {
-    "browser_bridge": {
-      "command": "node",
-      "args": [
-        "d:/ai/antigravity/work/Browser_Agent_Extension_Bridge/bridge-server/dist/index.js"
-      ],
-      "env": {
-        "BRIDGE_PORT": "3088"
-      }
-    }
-  }
-}
-```
-
----
-
-## 🛠️ 暴露给 AI 的核心工具集 (MCP Tools)
-
-### 1. 窗口与多标签页隔离管理 (New in v1.2.0)
-| 工具名称 | 功能描述 | 参数 |
-| :--- | :--- | :--- |
-| `browser_create_window` | 创建/激活独立的 AI 专属浏览器窗口（物理隔离主窗口） | `url` (可选), `focused` (是否前台显示) |
-| `browser_close_window` | 任务完成后一键关闭整个 AI 专属工作窗口，清理所有后台任务 | 无 |
-| `browser_create_tab` | 创建新网页（默认 `isolate_window: true` 自动放入专属独立窗口中） | `url`, `active`, `isolate_window`, `auto_bind` |
-| `browser_list_tabs` | 列出浏览器所有打开的标签页（含窗口 ID、是否属于 AI 专属窗口） | 无 |
-| `browser_bind_tab` | 将 AI 后续操作绑定到指定后台标签页 ID | `tab_id`: 目标标签页编号 |
-| `browser_unbind_tab` | 解除标签页锁定，恢复为自动跟随前台活动标签页模式 | 无 |
-| `browser_switch_tab` | **【自动切换标签页】将前台活动页面切换到指定标签页（支持标题关键字模糊匹配，免手动点击）** | `tab_id` (可选), `title` (可选), `keyword` (可选) |
-| `browser_close_tab` | 关闭指定的标签页（或当前绑定的后台标签页） | `tab_id` (可选) |
-
-### 2. 页面感知与 DOM 交互（支持跨 Tab / 跨窗口操作）
-| 工具名称 | 功能描述 | 参数 |
-| :--- | :--- | :--- |
-| `browser_get_active_tab` | 获取当前受控网页的 URL、标题与所属窗口 ID | `tab_id` (可选) |
-| `browser_snapshot` | 获取网页带 `[1]`, `[2]` 编号的结构化可交互元素快照 | `tab_id` (可选) |
-| `browser_click` | 点击指定编号的元素（按钮/链接/复选框等） | `element_id`: 编号, `tab_id` (可选) |
-| `browser_type` | 在指定输入框填入文本并触发响应式更新（支持专属窗口静默填表） | `element_id`, `text`, `clear_first`, `tab_id` |
-| `browser_press` | 触发键盘按键（Enter / Tab / Escape 等） | `key`: 按键名称, `tab_id` (可选) |
-| `browser_scroll` | 页面平滑滚动 | `direction`: 'down'/'up'/'top'/'bottom', `amount`: 像素 |
-| `browser_navigate` | 在已锁定的专属标签页中跳转到指定 URL | `url`: 目标网址, `tab_id` (可选) |
-| `browser_get_text` | 提取指定元素文本或用户在网页中划选的片段 | `element_id`, `tab_id` (可选) |
-| `browser_wait` | 智能等待页面加载或异步渲染 | `seconds`: 等待秒数 |
-
----
-
-## 🔒 隐私与安全性
-
-1. **主客物理隔离**：AI 打开的任意页面均放入独立的专属窗口中，不污染、不打乱用户主工作窗口。
-2. **敏感信息脱敏**：遇到密码输入框或支付卡号字段时，前端自动将内容脱敏为 `••••`，绝对不向模型上传真实密码。
-3. **本地回环隔离**：WebSocket 服务严格绑定 `127.0.0.1`，拒绝来自局域网外部的未授权访问。
+仓库包含 `dist` 供直接启动；修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。

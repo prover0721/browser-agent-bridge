@@ -8,6 +8,7 @@
   // DOM 元素缓存表：ID -> HTMLElement
   const elementMap = new Map();
   let nextElementId = 1;
+  let snapshotId = null;
 
   // 敏感字段检测正则
   const SENSITIVE_REGEX = /password|pwd|cvv|cvc|cardnumber|creditcard|secret|token/i;
@@ -95,10 +96,10 @@
    */
   function extractSnapshot(options = {}) {
     elementMap.clear();
-    nextElementId = 1;
+    snapshotId = crypto.randomUUID();
 
     const viewportOnly = options.viewport_only !== false; // 默认开启视口过滤
-    const maxElements = options.max_elements || 50;
+    const maxElements = Math.min(500, Math.max(1, Number(options.max_elements) || 50));
 
     const allElements = document.querySelectorAll('*');
     const inViewportList = [];
@@ -115,13 +116,14 @@
         const tagName = el.tagName.toLowerCase();
         const role = el.getAttribute('role') || '';
         const type = el.getAttribute('type') || '';
-        const placeholder = el.getAttribute('placeholder') || '';
-        const ariaLabel = el.getAttribute('aria-label') || '';
-        const titleAttr = el.getAttribute('title') || '';
-        const name = el.getAttribute('name') || '';
-        const href = el.getAttribute('href') || '';
+        const placeholder = (el.getAttribute('placeholder') || '').slice(0, 300);
+        const autocomplete = el.getAttribute('autocomplete') || '';
+        const ariaLabel = (el.getAttribute('aria-label') || '').slice(0, 300);
+        const titleAttr = (el.getAttribute('title') || '').slice(0, 300);
+        const name = (el.getAttribute('name') || '').slice(0, 300);
+        const href = (el.getAttribute('href') || '').slice(0, 300);
         
-        let text = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+        let text = el.matches('input, textarea, select, [contenteditable]') ? '' : (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
         if (text.length > 80) {
           text = text.substring(0, 80) + '...';
         }
@@ -140,7 +142,7 @@
         const isPassword = type.toLowerCase() === 'password' || 
                            SENSITIVE_REGEX.test(name) || 
                            SENSITIVE_REGEX.test(el.id || '') || 
-                           SENSITIVE_REGEX.test(placeholder);
+                           SENSITIVE_REGEX.test(placeholder) || /^(cc-|current-password|new-password|one-time-code)/i.test(autocomplete);
 
         if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
           if (isPassword) {
@@ -181,6 +183,7 @@
     const totalCount = inViewportList.length + offscreenList.length;
 
     const header = [
+      `[Snapshot]: ${snapshotId}`,
       `[URL]: ${window.location.href}`,
       `[Title]: ${document.title}`,
       `[Scroll]: 垂直位置 ${scrollY}px (滚动进度约 ${scrollPercent}%)`,
@@ -201,9 +204,9 @@
       }
     } else {
       contentOutput = `=== 【当前屏幕视口内可见元素】 ===\n` + 
-        (inViewportList.length > 0 ? inViewportList.join('\n') : '(无)') +
+        (inViewportList.length > 0 ? inViewportList.slice(0, maxElements).join('\n') : '(无)') +
         `\n\n=== 【屏幕外滚动可见元素】 ===\n` + 
-        (offscreenList.length > 0 ? offscreenList.slice(0, maxElements).join('\n') : '(无)');
+        (offscreenList.length > 0 ? offscreenList.slice(0, Math.max(0, maxElements - inViewportList.length)).join('\n') : '(无)');
     }
 
     return header + '\n' + contentOutput;
@@ -212,13 +215,22 @@
   /**
    * 执行点击操作
    */
-  function executeClick(id) {
+  function resolveElement(id, expectedSnapshot) {
+    if (expectedSnapshot && expectedSnapshot !== snapshotId) throw new Error('快照已过期，请重新获取');
+    const el = elementMap.get(Number(id));
+    if (!el || !el.isConnected || !isElementVisible(el)) throw new Error('元素已失效，请重新获取快照');
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('元素不可用');
+    return el;
+  }
+
+  function executeClick(id, expectedSnapshot) {
     const el = elementMap.get(Number(id));
     if (!el) {
       return { success: false, error: `未找到 ID 为 [${id}] 的元素，请先调用 browser_snapshot 获取最新元素列表。` };
     }
 
     try {
+      resolveElement(id, expectedSnapshot);
       el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
       el.focus();
 
@@ -243,13 +255,14 @@
   /**
    * 执行输入操作
    */
-  function executeType(id, text, clearFirst = true) {
+  function executeType(id, text, clearFirst = true, expectedSnapshot) {
     const el = elementMap.get(Number(id));
     if (!el) {
       return { success: false, error: `未找到 ID 为 [${id}] 的输入元素。` };
     }
 
     try {
+      resolveElement(id, expectedSnapshot);
       el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
       el.focus();
 
@@ -264,13 +277,9 @@
         }
         
         // 兼容 React 等劫持 value 属性的前端框架
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype,
-          'value'
-        )?.set || Object.getOwnPropertyDescriptor(
-          window.HTMLTextAreaElement.prototype,
-          'value'
-        )?.set;
+        const prototype = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
+          : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
 
         const targetValue = (clearFirst ? '' : el.value) + text;
 
@@ -282,9 +291,11 @@
 
         el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        return { success: false, error: "目标元素不可输入" };
       }
 
-      return { success: true, message: `已在元素 [${id}] 输入内容: "${text}"` };
+      return { success: true, message: `已填写元素 [${id}]` };
     } catch (err) {
       return { success: false, error: `输入失败: ${err.message}` };
     }
@@ -305,11 +316,11 @@
       if (key === 'Enter' && activeEl.tagName === 'INPUT') {
         const form = activeEl.form;
         if (form) {
-          form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+          form.requestSubmit();
         }
       }
 
-      return { success: true, message: `已触发按键: ${key}` };
+      return { success: true, message: `已派发按键事件: ${key}（合成事件，不保证浏览器默认行为）` };
     } catch (err) {
       return { success: false, error: `按键失败: ${err.message}` };
     }
@@ -341,11 +352,13 @@
   /**
    * 提取页面或元素文本
    */
-  function executeGetText(id) {
+  function executeGetText(id, expectedSnapshot) {
     if (id !== undefined && id !== null) {
+      if (expectedSnapshot && expectedSnapshot !== snapshotId) return { success: false, error: '快照已过期' };
       const el = elementMap.get(Number(id));
-      if (!el) return { success: false, error: `未找到 ID 为 [${id}] 的元素` };
-      return { success: true, text: el.innerText || el.textContent || '' };
+      if (!el || !el.isConnected) return { success: false, error: `未找到 ID 为 [${id}] 的元素` };
+      if (el.matches('input, textarea, select, [contenteditable]')) return { success: true, text: '[表单内容已隐藏]' };
+      return { success: true, text: (el.innerText || el.textContent || '').slice(0, 20000) };
     }
     
     // 默认返回当前划选文本或正文主体
@@ -353,7 +366,9 @@
     if (selection) {
       return { success: true, text: `[用户划选文本]:\n${selection}` };
     }
-    return { success: true, text: document.body.innerText || '' };
+    const body = document.body.cloneNode(true);
+    body.querySelectorAll('input, textarea, select, [contenteditable], script, style').forEach(el => el.remove());
+    return { success: true, text: (body.textContent || '').slice(0, 20000) };
   }
 
   // 划选监听，自动通知 background/sidepanel
@@ -369,18 +384,22 @@
     const { action, payload } = request;
 
     switch (action) {
+      case 'PING': {
+        sendResponse({ success: true });
+        break;
+      }
       case 'SNAPSHOT': {
         const snapshot = extractSnapshot(payload || {});
         sendResponse({ success: true, data: snapshot });
         break;
       }
       case 'CLICK': {
-        const res = executeClick(payload.id);
+        const res = executeClick(payload.id, payload.snapshot_id);
         sendResponse(res);
         break;
       }
       case 'TYPE': {
-        const res = executeType(payload.id, payload.text, payload.clearFirst);
+        const res = executeType(payload.id, payload.text, payload.clearFirst, payload.snapshot_id);
         sendResponse(res);
         break;
       }
@@ -395,7 +414,7 @@
         break;
       }
       case 'GET_TEXT': {
-        const res = executeGetText(payload?.id);
+        const res = executeGetText(payload?.id, payload?.snapshot_id);
         sendResponse(res);
         break;
       }
