@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let currentSelectedText = '';
   let isCurrentlyBound = false;
+  let isAiWindow = false;
 
   // 更新连接状态徽标
   function updateStatus(status, port) {
@@ -37,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
     isCurrentlyBound = !!isBound;
     if (isCurrentlyBound) {
       lockBadge.className = 'mode-badge locked';
-      lockBadge.textContent = '📌 后台锁定模式';
+      lockBadge.textContent = isAiWindow ? '🪟 独立窗口后台运行' : '📌 已绑定页面';
       btnToggleLock.textContent = '🔓 解除锁定 (恢复跟随前台)';
       btnToggleLock.style.borderColor = '#8b5cf6';
     } else {
@@ -51,6 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // 更新标签页信息
   function updateTabInfo(tab, boundTabId) {
     if (!tab) return;
+    isAiWindow = !!tab.is_ai_window;
     tabTitle.textContent = (boundTabId === tab.id ? '📌 ' : '') + (tab.title || '无标题');
     tabUrl.textContent = tab.url || '';
     updateLockState(boundTabId && boundTabId === tab.id);

@@ -16,7 +16,7 @@ bridge.start();
 // 创建 MCP Server 实例
 const server = new index_js_1.Server({
     name: 'browser-agent-bridge',
-    version: '1.4.1',
+    version: '1.4.2',
 }, {
     capabilities: {
         tools: {},
@@ -27,13 +27,13 @@ const TOOLS = [
     // ── 1. 窗口与多标签页隔离管理 ──
     {
         name: 'browser_create_window',
-        description: '创建一个独立的 AI 专属浏览器窗口（与用户的主窗口彻底物理隔离，绝不打乱用户主窗口的标签页数量和位置）。',
+        description: '开始后台任务：新建或复用当前会话的 AI 专用窗口并绑定工作页，默认不抢前台。重复调用不会额外创建标签页；传 url 可跳转工作页。',
         inputSchema: {
             type: 'object',
             properties: {
                 url: {
                     type: 'string',
-                    description: '可选：初始打开的目标网址（默认为 "https://www.bing.com"）',
+                    description: '可选：工作页网址；新窗口默认 Bing，复用窗口且不传 url 时保留原页面',
                 },
                 focused: {
                     type: 'boolean',
@@ -64,7 +64,7 @@ const TOOLS = [
                 },
                 active: {
                     type: 'boolean',
-                    description: '是否直接切换到前台显示，默认为 false（即在后台静默运行，绝对不打扰用户）',
+                    description: '是否显示 AI 工作窗口，默认 false；后台任务保持 false',
                 },
                 isolate_window: {
                     type: 'boolean',
@@ -112,10 +112,11 @@ const TOOLS = [
     },
     {
         name: 'browser_switch_tab',
-        description: '【自动切换当前标签页】在浏览器中直接将前台活动页面切换到指定的标签页。支持直接按 tab_id 切换，或按标题关键字/网址模糊匹配（例如 title: "物联网平台"、title: "监控页"），AI 可直接自动切换前台网页，绝不需要让用户手动点击！',
+        description: '切换 AI 受控标签页，默认不改变前台显示。有工作窗口时，关键词默认只搜索该窗口。仅在用户要求展示结果时传 focused: true。',
         inputSchema: {
             type: 'object',
             properties: {
+                focused: { type: 'boolean', description: '是否将目标窗口和标签页显示到前台，默认 false' },
                 tab_id: {
                     type: 'number',
                     description: '可选：要切换到的目标标签页 ID',
@@ -290,7 +291,7 @@ const TOOLS = [
     },
     {
         name: 'browser_navigate',
-        description: '在【已锁定的专属后台标签页】或【指定的 tab_id 页面】中导航跳转至指定的网址 URL。注意：严禁覆盖用户当前正在前台浏览/使用的页面！若需打开全新网址，必须优先调用 browser_create_tab(active: false)。',
+        description: '后台自主导航：不传 tab_id 时，自动创建 AI 专用窗口或继续在已绑定的 AI 工作页跳转，不覆盖用户窗口。只有明确操作已有页面时才传 tab_id。',
         inputSchema: {
             type: 'object',
             properties: {
@@ -389,7 +390,7 @@ async function main() {
     process.once('SIGTERM', () => { bridge.close(); process.exit(0); });
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.4.1 Automatic Connection & Reliability) started successfully over stdio.');
+    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.4.2 Automatic Connection & Reliability) started successfully over stdio.');
 }
 main().catch((err) => {
     console.error('[MCP-Server] Fatal startup error:', err);

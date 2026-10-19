@@ -1,6 +1,6 @@
 {
   "name": "browser-agent-bridge-server",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Browser Agent MCP Bridge Server connecting AI Agents to Chrome/Edge Extension",
   "main": "dist/index.js",
   "scripts": {

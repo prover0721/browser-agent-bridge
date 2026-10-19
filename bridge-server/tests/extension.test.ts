@@ -50,8 +50,15 @@ test('disabled and detached elements fail; full snapshot respects limit', () => 
 });
 
 function background() {
-  const tabs = new Map([[1, { id: 1, windowId: 10, url: 'https://first.example', title: 'First' }], [2, { id: 2, windowId: 20, url: 'https://second.example', title: 'Second' }]]);
+  const tabs = new Map([[1, { id: 1, windowId: 10, active: true, status: 'complete', url: 'https://first.example', title: 'First' }], [2, { id: 2, windowId: 20, active: true, status: 'complete', url: 'https://second.example', title: 'Second' }]]);
   const removed: number[] = [];
+  const windows = new Map([[10, { id: 10 }], [20, { id: 20 }]]);
+  const windowCreates: any[] = [], windowUpdates: any[] = [], tabUpdates: any[] = [], domCalls: any[] = [];
+  let nextTab = 3, nextWindow = 30, foreground = 10;
+  const createTab = (options: any) => {
+    const tab = { id: nextTab++, windowId: options.windowId, url: options.url, title: options.url, active: options.active !== false, status: 'complete' };
+    tabs.set(tab.id, tab); return tab;
+  };
   const sockets: any[] = [];
   let runtimeListener: any;
   class FakeSocket {
@@ -65,8 +72,23 @@ function background() {
   const event = () => ({ addListener() {}, removeListener() {} });
   const chrome = {
     storage: { session: { get: async () => ({}), set: async () => {} }, local: { get(_: any, cb: any) { cb({}); }, set() {} } },
-    tabs: { get: async (id: number) => { if (!tabs.has(id)) throw new Error('missing'); return tabs.get(id); }, query: async () => [tabs.get(1)], remove: async (id: number) => { removed.push(id); }, onActivated: event(), onUpdated: event(), onRemoved: event(), sendMessage: async () => ({ success: true }) },
-    windows: { onRemoved: event() }, action: { onClicked: event() }, runtime: { sendMessage: () => Promise.resolve(), onMessage: { addListener(fn: any) { runtimeListener = fn; } } }
+    tabs: {
+      get: async (id: number) => { if (!tabs.has(id)) throw new Error('missing'); return tabs.get(id); },
+      query: async (query: any) => [...tabs.values()].filter(tab => (!query.windowId || tab.windowId === query.windowId) && (!query.lastFocusedWindow || tab.windowId === foreground) && (!query.active || tab.active)),
+      create: async (options: any) => createTab(options),
+      update: async (id: number, options: any) => { tabUpdates.push({ id, ...options }); const tab = tabs.get(id); if (!tab) throw new Error('missing'); Object.assign(tab, options); return tab; },
+      remove: async (id: number) => { removed.push(id); tabs.delete(id); },
+      onActivated: event(), onUpdated: event(), onRemoved: event(),
+      sendMessage: async (id: number, message: any) => { domCalls.push({ id, ...message }); return { success: true, message: 'done' }; }
+    },
+    windows: {
+      get: async (id: number) => { const win = windows.get(id); if (!win) throw new Error('missing window'); return { ...win, tabs: [...tabs.values()].filter(tab => tab.windowId === id) }; },
+      create: async (options: any) => { windowCreates.push(options); const id = nextWindow++; windows.set(id, { id }); if (options.focused) foreground = id; return { id, tabs: [createTab({ windowId: id, url: options.url })] }; },
+      update: async (id: number, options: any) => { windowUpdates.push({ id, ...options }); if (options.focused) foreground = id; return { id }; },
+      remove: async (id: number) => { windows.delete(id); for (const tab of tabs.values()) if (tab.windowId === id) tabs.delete(tab.id); },
+      onRemoved: event()
+    }, action: { onClicked: event() }, runtime: { sendMessage: () => Promise.resolve(), onMessage: { addListener(fn: any) { runtimeListener = fn; } } }
+
   };
   const context = vm.createContext({ chrome, console, WebSocket: FakeSocket, setInterval() {}, setTimeout, clearTimeout, URL });
   vm.runInContext(readFileSync(new URL('browser-extension/background.js', root), 'utf8'), context);
@@ -76,7 +98,7 @@ function background() {
     await vm.runInContext('commandQueue', context);
     return ws.replies.at(-1);
   }
-  return { context, sockets, tabs, removed, call, ui(msg: any): any { let result; runtimeListener(msg, {}, (res: any) => result = res); return result; } };
+  return { context, sockets, tabs, removed, call, windowCreates, windowUpdates, tabUpdates, domCalls, closeWindow: (id: number) => { windows.delete(id); for (const tab of tabs.values()) if (tab.windowId === id) tabs.delete(tab.id); }, foreground: () => foreground, setForeground: (id: number) => { foreground = id; }, ui(msg: any): any { let result; runtimeListener(msg, {}, (res: any) => result = res); return result; } };
 }
 
 test('missing explicit and lost bound tabs never fall back to the foreground', async () => {
@@ -136,4 +158,86 @@ test('extension automatically connects with empty configuration and accepts orig
   await vm.runInContext('commandQueue', page.context);
   assert.equal(socket.replies.at(-1).id, 'legacy-1.4');
   assert.equal(socket.replies.at(-1).result.tab_id, 1);
+});
+
+
+test('background navigation creates its own window and keeps subsequent navigation there', async () => {
+ const page = background();
+ const original = { ...page.tabs.get(1) };
+ const first = await page.call('browser_navigate', { url: 'https://example.com/task' });
+ assert.ok(!first.error, first.error);
+ const id = first.result.tab_id, windowId = first.result.window_id;
+ assert.notEqual(windowId, 10);
+ assert.equal(page.windowCreates[0].focused, false);
+ assert.equal(page.foreground(), 10);
+ assert.deepEqual(page.tabs.get(1), original);
+ page.setForeground(20);
+ const second = await page.call('browser_navigate', { url: 'https://example.com/next' });
+ assert.equal(second.result.tab_id, id);
+ assert.equal(second.result.window_id, windowId);
+ assert.equal(page.foreground(), 20);
+ assert.equal(page.windowCreates.length, 1);
+ await page.call('browser_click', { element_id: 1 });
+ assert.equal(page.domCalls.at(-1).id, id);
+});
+
+test('opening more pages uses the work window; creating the window again reuses its page', async () => {
+ const page = background();
+ const first = await page.call('browser_create_window', { url: 'https://example.com/first' });
+ const reused = await page.call('browser_create_window', {});
+ assert.equal(reused.result.tab_id, first.result.tab_id);
+ assert.equal(reused.result.url, 'https://example.com/first');
+ const extra = await page.call('browser_create_tab', { url: 'https://example.com/second' });
+ assert.equal(extra.result.window_id, first.result.window_id);
+ assert.notEqual(extra.result.tab_id, first.result.tab_id);
+ assert.equal(page.foreground(), 10);
+ assert.equal(page.windowCreates.length, 1);
+ assert.equal(page.tabs.get(1)!.url, 'https://first.example');
+});
+
+test('switching work pages does not steal focus and searches within the work window', async () => {
+ const page = background();
+ const first = await page.call('browser_create_tab', { url: 'https://example.com/first' });
+ await page.call('browser_create_tab', { url: 'https://example.com/second' });
+ const changed = await page.call('browser_switch_tab', { title: 'first' });
+ assert.equal(changed.result.tab_id, first.result.tab_id);
+ assert.equal(changed.result.focused, false);
+ assert.equal(page.windowUpdates.length, 0);
+ assert.equal(page.foreground(), 10);
+ await page.call('browser_switch_tab', { tab_id: first.result.tab_id, focused: true });
+ assert.equal(page.foreground(), first.result.window_id);
+});
+
+test('a bound user page is preserved when starting autonomous background navigation', async () => {
+ const page = background();
+ await page.call('browser_bind_tab', { tab_id: 1 });
+ const result = await page.call('browser_navigate', { url: 'https://example.com/work' });
+ assert.ok(result.result.is_ai_window);
+ assert.notEqual(result.result.tab_id, 1);
+ assert.equal(page.tabs.get(1)!.url, 'https://first.example');
+});
+
+test('closing the work window allows safe recreation and explicit targets still fail closed', async () => {
+ const page = background();
+ const first = await page.call('browser_navigate', { url: 'https://example.com/first' });
+ const firstId = first.result.tab_id;
+ page.closeWindow(first.result.window_id);
+ const recreated = await page.call('browser_navigate', { url: 'https://example.com/recovered' });
+ assert.ok(!recreated.error, recreated.error);
+ assert.notEqual(recreated.result.tab_id, firstId);
+ assert.notEqual(recreated.result.window_id, first.result.window_id);
+ assert.equal(page.tabs.get(1)!.url, 'https://first.example');
+ const explicit = await page.call('browser_navigate', { tab_id: firstId, url: 'https://example.com/explicit' });
+ assert.match(explicit.error, /不存在/);
+});
+
+test('two task sessions use different work windows and preserve the user window', async () => {
+ const page = background();
+ const a = await page.call('browser_navigate', { url: 'https://example.com/a' }, 'a');
+ const b = await page.call('browser_navigate', { url: 'https://example.com/b' }, 'b');
+ assert.notEqual(a.result.window_id, b.result.window_id);
+ const again = await page.call('browser_navigate', { url: 'https://example.com/a-next' }, 'a');
+ assert.equal(again.result.tab_id, a.result.tab_id);
+ assert.equal(page.tabs.get(b.result.tab_id)!.url, 'https://example.com/b');
+ assert.equal(page.foreground(), 10);
 });

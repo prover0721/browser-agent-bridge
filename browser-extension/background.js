@@ -86,6 +86,7 @@ function connectBridge(force = false) {
           if (sessions.size > 256) sessions.delete(sessions.keys().next().value);
           await chrome.storage.session.set({ sessions: Object.fromEntries(sessions) }).catch(() => {});
         }
+        await broadcastActiveTabInfo().catch(() => {});
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: msg.id, result: response.result ?? null, error: response.error ?? null }));
       });
     };
@@ -131,33 +132,32 @@ async function waitForTabReady(tabId, timeoutMs = 10000) {
   });
 }
 
-async function ensureAiWindow(url, makeActive = false) {
+async function ensureAiWindow(url, makeActive = false, reuseTab = false) {
+  let win = null;
   if (aiWindowId) {
-    try {
-      const win = await chrome.windows.get(aiWindowId, { populate: true });
-      if (win) {
-        // 在已有的 AI 专属窗口中打开新标签页
-        const newTab = await chrome.tabs.create({
-          windowId: aiWindowId,
-          url,
-          active: makeActive
-        });
-        return { tab: newTab, isNewWindow: false, windowId: aiWindowId };
-      }
-    } catch (e) {
-      aiWindowId = null;
-    }
+    try { win = await chrome.windows.get(aiWindowId, { populate: true }); }
+    catch { aiWindowId = null; }
   }
-
-  // 创建全新的 AI 专属独立窗口（focused: makeActive，默认 false，不抢夺用户焦点）
-  const newWin = await chrome.windows.create({
-    url,
-    focused: makeActive,
-    state: 'normal'
-  });
-  aiWindowId = newWin.id;
-  const newTab = newWin.tabs && newWin.tabs[0] ? newWin.tabs[0] : (await chrome.tabs.query({ windowId: newWin.id }))[0];
-  return { tab: newTab, isNewWindow: true, windowId: newWin.id };
+  if (win) {
+    let tab;
+    if (reuseTab) {
+      tab = win.tabs?.find(tab => tab.id === boundTabId) || win.tabs?.find(tab => tab.active) || win.tabs?.[0];
+    }
+    if (tab) {
+      if (url) tab = await chrome.tabs.update(tab.id, { url });
+    } else {
+      tab = await chrome.tabs.create({ windowId: win.id, url: url || 'https://www.bing.com', active: makeActive });
+    }
+    if (makeActive) {
+      await chrome.tabs.update(tab.id, { active: true });
+      await chrome.windows.update(win.id, { focused: true });
+    }
+    return { tab, isNewWindow: false, windowId: win.id };
+  }
+  const created = await chrome.windows.create({ url: url || 'https://www.bing.com', focused: makeActive, state: 'normal' });
+  aiWindowId = created.id;
+  const tab = created.tabs?.[0] || (await chrome.tabs.query({ windowId: created.id }))[0];
+  return { tab, isNewWindow: true, windowId: created.id };
 }
 
 /**
@@ -215,12 +215,15 @@ async function ensureContentScriptInjected(tabId) {
  * 处理来自 Bridge Server 的指令
  */
 async function handleBridgeCommand(method, params) {
+  if (['browser_navigate', 'browser_create_tab', 'browser_create_window'].includes(method) && params.url !== undefined && (typeof params.url !== 'string' || !params.url.trim())) {
+    return { error: 'url 必须是非空网址字符串' };
+  }
   // ── 1. 窗口与多标签页管理类命令 ──
   if (method === 'browser_create_window') {
-    let url = params.url || 'https://www.bing.com';
-    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    let url = params.url;
+    if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
     const makeActive = params.focused === true;
-    const { tab, windowId } = await ensureAiWindow(url, makeActive);
+    const { tab, windowId } = await ensureAiWindow(url, makeActive, true);
     
     boundTabId = tab.id;
     notifySidePanel({ type: 'TAB_LOCK_CHANGED', boundTabId: tab.id });
@@ -230,7 +233,7 @@ async function handleBridgeCommand(method, params) {
       result: {
         window_id: windowId,
         tab_id: tab.id,
-        url,
+        url: (await chrome.tabs.get(tab.id)).url,
         message: `已创建/获取 AI 专属独立工作窗口 (Window ID: ${windowId}, Tab ID: ${tab.id})，已使用独立工作窗口。`
       }
     };
@@ -295,7 +298,7 @@ async function handleBridgeCommand(method, params) {
       notifySidePanel({ type: 'TAB_LOCK_CHANGED', boundTabId: newTab.id });
     }
 
-    await waitForTabReady(newTab.id);
+    newTab = await waitForTabReady(newTab.id);
 
     return {
       result: {
@@ -346,7 +349,9 @@ async function handleBridgeCommand(method, params) {
 
   if (method === 'browser_switch_tab') {
     let targetTab = null;
-    const tabs = await chrome.tabs.query({});
+    const allTabs = await chrome.tabs.query({});
+    const tabs = !params.tab_id && params.focused !== true && aiWindowId
+      ? allTabs.filter(tab => tab.windowId === aiWindowId) : allTabs;
 
     // 1. 按 tab_id 精确查找
     if (params.tab_id) {
@@ -367,8 +372,10 @@ async function handleBridgeCommand(method, params) {
 
     // 物理切换浏览器前台显示
     try {
-      await chrome.windows.update(targetTab.windowId, { focused: true });
-      await chrome.tabs.update(targetTab.id, { active: true });
+      if (params.focused === true) {
+        await chrome.windows.update(targetTab.windowId, { focused: true });
+        await chrome.tabs.update(targetTab.id, { active: true });
+      }
     } catch (e) {
       return { error: `切换标签页失败: ${e.message}` };
     }
@@ -377,7 +384,6 @@ async function handleBridgeCommand(method, params) {
     activeControlledTab = targetTab;
     boundTabId = targetTab.id;
     broadcastActiveTabInfo();
-    await new Promise((r) => setTimeout(r, 600));
 
     return {
       result: {
@@ -385,7 +391,8 @@ async function handleBridgeCommand(method, params) {
         window_id: targetTab.windowId,
         title: targetTab.title,
         url: targetTab.url,
-        message: `已成功自动将浏览器切换到标签页【${targetTab.title}】！`
+        focused: params.focused === true,
+        message: `已切换受控页面到【${targetTab.title}】，${params.focused === true ? "已显示窗口" : "保持前台窗口不变"}`
       }
     };
   }
@@ -401,6 +408,15 @@ async function handleBridgeCommand(method, params) {
     }
     await chrome.tabs.remove(closedId);
     return { result: { message: `已关闭标签页 [ID: ${closedId}] "${targetTab.title}"` } };
+  }
+
+  // Navigation without an explicit target starts independent work automatically.
+  if (method === 'browser_navigate' && !params.tab_id) {
+    if (!params.url) return { error: '未提供导航目标 URL' };
+    const bound = boundTabId ? await chrome.tabs.get(boundTabId).catch(() => null) : null;
+    if (!bound || bound.windowId !== aiWindowId) {
+      return handleBridgeCommand('browser_create_tab', { url: params.url });
+    }
   }
 
   // ── 2. 页面级信息与跳转命令 ──
@@ -431,7 +447,8 @@ async function handleBridgeCommand(method, params) {
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
     await chrome.tabs.update(targetTab.id, { url });
     await waitForTabReady(targetTab.id);
-    return { result: { message: `标签页 [${targetTab.id}] 已跳转至: ${url}` } };
+    const loaded = await chrome.tabs.get(targetTab.id);
+    return { result: { tab_id: loaded.id, window_id: loaded.windowId, url: loaded.url, title: loaded.title, is_ai_window: loaded.windowId === aiWindowId, message: `标签页 [${targetTab.id}] 已跳转至: ${url}` } };
   }
 
   // ── 3. 派发给 Content Script 的 DOM 操作 ──
@@ -495,6 +512,7 @@ async function handleBridgeCommand(method, params) {
 async function broadcastActiveTabInfo() {
   const targetTab = await resolveTargetTab().catch(() => null);
   if (targetTab) {
+    activeControlledTab = targetTab;
     notifySidePanel({
       type: 'TAB_INFO',
       tab: {
