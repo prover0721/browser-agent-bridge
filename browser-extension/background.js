@@ -406,6 +406,10 @@ async function handleBridgeCommand(method, params) {
     switch (method) {
       case 'browser_snapshot':
         action = 'SNAPSHOT';
+        payload = {
+          viewport_only: params.viewport_only !== false,
+          max_elements: params.max_elements || 50
+        };
         break;
       case 'browser_click':
         action = 'CLICK';

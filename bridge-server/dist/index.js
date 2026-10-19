@@ -16,7 +16,7 @@ bridge.start();
 // 创建 MCP Server 实例
 const server = new index_js_1.Server({
     name: 'browser-agent-bridge',
-    version: '1.3.0',
+    version: '1.4.0',
 }, {
     capabilities: {
         tools: {},
@@ -162,13 +162,21 @@ const TOOLS = [
     },
     {
         name: 'browser_snapshot',
-        description: '获取目标网页的结构化纯文本快照（包含带有 [1], [2] 等数字编号的交互元素，如按钮、输入框、链接等）。支持指定后台 tab_id，在执行点击、输入前必须先调用此工具获取最新的元素编号。',
+        description: '获取目标网页的结构化纯文本快照（包含带有 [1], [2] 等数字编号的交互元素，如按钮、输入框、链接等）。已内置【视口优先（In-Viewport）智能降噪与 Token 瘦身】，默认只返回当前屏幕可见范围内的核心元素并附带滚动位置指示，极度节省 Token。若需查看全页元素，可传 viewport_only: false。',
         inputSchema: {
             type: 'object',
             properties: {
                 tab_id: {
                     type: 'number',
                     description: '可选：指定要在哪个后台标签页上获取快照',
+                },
+                viewport_only: {
+                    type: 'boolean',
+                    description: '可选：是否仅返回当前屏幕视口内的元素（默认为 true，推荐保持开启以大幅节省 Token）',
+                },
+                max_elements: {
+                    type: 'number',
+                    description: '可选：最多返回的元素数量上限（默认为 50）',
                 },
             },
             required: [],

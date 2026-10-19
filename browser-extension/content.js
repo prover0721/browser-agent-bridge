@@ -73,14 +73,36 @@
   }
 
   /**
-   * 收集并提取页面的结构化快照
+   * 判断元素是否在当前浏览器视口（屏幕可见范围）内
    */
-  function extractSnapshot() {
+  function isElementInViewport(el) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    const rect = el.getBoundingClientRect();
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    const vw = window.innerWidth || document.documentElement.clientWidth;
+    return (
+      rect.top < vh &&
+      rect.bottom > 0 &&
+      rect.left < vw &&
+      rect.right > 0 &&
+      rect.width > 2 &&
+      rect.height > 2
+    );
+  }
+
+  /**
+   * 收集并提取页面的结构化快照（支持视口优先智能降噪与 Token 瘦身）
+   */
+  function extractSnapshot(options = {}) {
     elementMap.clear();
     nextElementId = 1;
 
+    const viewportOnly = options.viewport_only !== false; // 默认开启视口过滤
+    const maxElements = options.max_elements || 50;
+
     const allElements = document.querySelectorAll('*');
-    const interactiveList = [];
+    const inViewportList = [];
+    const offscreenList = [];
 
     allElements.forEach((el) => {
       if (isInteractiveElement(el)) {
@@ -90,15 +112,12 @@
           return;
         }
 
-        const id = nextElementId++;
-        elementMap.set(id, el);
-        el.setAttribute('data-agent-id', id.toString());
-
         const tagName = el.tagName.toLowerCase();
         const role = el.getAttribute('role') || '';
         const type = el.getAttribute('type') || '';
         const placeholder = el.getAttribute('placeholder') || '';
         const ariaLabel = el.getAttribute('aria-label') || '';
+        const titleAttr = el.getAttribute('title') || '';
         const name = el.getAttribute('name') || '';
         const href = el.getAttribute('href') || '';
         
@@ -106,6 +125,16 @@
         if (text.length > 80) {
           text = text.substring(0, 80) + '...';
         }
+
+        // 剪枝降噪：无文本且无任何有效属性的空 a/div/span 节点过滤
+        const hasSemantics = !!(ariaLabel || placeholder || titleAttr || name || (href && href !== '#' && !href.startsWith('javascript:')));
+        if (['a', 'div', 'span', 'i', 'p'].includes(tagName) && !text && !hasSemantics) {
+          return;
+        }
+
+        const id = nextElementId++;
+        elementMap.set(id, el);
+        el.setAttribute('data-agent-id', id.toString());
 
         let value = '';
         const isPassword = type.toLowerCase() === 'password' || 
@@ -122,11 +151,14 @@
           }
         }
 
+        const inViewport = isElementInViewport(el);
+
         // 构建单个元素的描述
         let desc = `[${id}] ${tagName.toUpperCase()}`;
         if (type) desc += `(type="${type}")`;
         if (role) desc += `(role="${role}")`;
         if (ariaLabel) desc += ` [aria="${ariaLabel}"]`;
+        if (titleAttr && titleAttr !== ariaLabel) desc += ` [title="${titleAttr}"]`;
         if (placeholder) desc += ` [placeholder="${placeholder}"]`;
         if (text && text !== placeholder) desc += `: "${text}"`;
         if (value) desc += ` (value="${value}")`;
@@ -134,18 +166,47 @@
           desc += ` (href="${href}")`;
         }
 
-        interactiveList.push(desc);
+        if (inViewport) {
+          inViewportList.push(desc);
+        } else {
+          offscreenList.push(desc);
+        }
       }
     });
+
+    const scrollY = Math.round(window.scrollY);
+    const maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+    const scrollPercent = Math.min(100, Math.round((scrollY / maxScroll) * 100));
+
+    const totalCount = inViewportList.length + offscreenList.length;
 
     const header = [
       `[URL]: ${window.location.href}`,
       `[Title]: ${document.title}`,
-      `[Interactive Elements Count]: ${interactiveList.length}`,
+      `[Scroll]: 垂直位置 ${scrollY}px (滚动进度约 ${scrollPercent}%)`,
+      `[Elements]: 视口内 ${inViewportList.length} 个 / 全页共 ${totalCount} 个 (当前模式: ${viewportOnly ? '视口优先瘦身' : '全页完整模式'})`,
       '------------------------------------------------------------'
     ].join('\n');
 
-    return header + '\n' + (interactiveList.length > 0 ? interactiveList.join('\n') : '(当前页面未检测到可交互元素)');
+    let contentOutput = '';
+
+    if (viewportOnly) {
+      const displayList = inViewportList.slice(0, maxElements);
+      contentOutput = displayList.length > 0 
+        ? displayList.join('\n') 
+        : '(当前屏幕视口内未检测到可交互元素)';
+
+      if (offscreenList.length > 0) {
+        contentOutput += `\n\n>>> [Token 瘦身提示]: 屏幕外仍有 ${offscreenList.length} 个元素已省略。如需操作下方内容，请调用 browser_scroll 向下滚动，或在 browser_snapshot 中传入 viewport_only: false。`;
+      }
+    } else {
+      contentOutput = `=== 【当前屏幕视口内可见元素】 ===\n` + 
+        (inViewportList.length > 0 ? inViewportList.join('\n') : '(无)') +
+        `\n\n=== 【屏幕外滚动可见元素】 ===\n` + 
+        (offscreenList.length > 0 ? offscreenList.slice(0, maxElements).join('\n') : '(无)');
+    }
+
+    return header + '\n' + contentOutput;
   }
 
   /**
@@ -309,7 +370,7 @@
 
     switch (action) {
       case 'SNAPSHOT': {
-        const snapshot = extractSnapshot();
+        const snapshot = extractSnapshot(payload || {});
         sendResponse({ success: true, data: snapshot });
         break;
       }
