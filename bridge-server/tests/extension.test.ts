@@ -14,7 +14,11 @@ function content(html: string) {
   window.HTMLElement.prototype.getBoundingClientRect = () => ({ left: 1, top: 1, right: 100, bottom: 30, width: 99, height: 29 });
   window.HTMLElement.prototype.scrollIntoView = () => {};
   window.eval(readFileSync(new URL('browser-extension/content.js', root), 'utf8'));
-  return { window, call(action: string, payload = {}): any { let response; listener({ action, payload }, {}, (value: any) => response = value); return response; } };
+  return {
+    window,
+    call(action: string, payload = {}): any { let response; listener({ action, payload }, {}, (value: any) => response = value); return response; },
+    callAsync(action: string, payload = {}): Promise<any> { return new Promise(resolve => listener({ action, payload }, {}, resolve)); }
+  };
 }
 
 test('textarea input uses textarea setter and never echoes credentials', () => {
@@ -240,4 +244,37 @@ test('two task sessions use different work windows and preserve the user window'
  assert.equal(again.result.tab_id, a.result.tab_id);
  assert.equal(page.tabs.get(b.result.tab_id)!.url, 'https://example.com/b');
  assert.equal(page.foreground(), 10);
+});
+
+test('label wrapping radio button is identified as RADIO and toggles on click', () => {
+  const page = content('<label class="el-radio"><input type="radio" name="resume" value="1"><span>朱宝乐_个人简历.pdf</span></label>');
+  const snapshot = page.call('SNAPSHOT').data;
+  assert.match(snapshot, /RADIO.*朱宝乐_个人简历\.pdf/);
+  const id = Number(snapshot.match(/\[(\d+)\] RADIO/)[1]);
+  const result = page.call('CLICK', { id });
+  assert.equal(result.success, true);
+  assert.equal(page.window.document.querySelector('input').checked, true);
+});
+
+test('active dialog groups modal elements and isolates background elements', () => {
+  const page = content('<div><button>Background Button</button></div><div role="dialog" aria-modal="true"><h3>简历选择</h3><button>Confirm</button></div>');
+  const snapshot = page.call('SNAPSHOT').data;
+  assert.match(snapshot, /当前活动弹窗: 简历选择/);
+  assert.match(snapshot, /Confirm/);
+});
+
+test('shadowRoot elements are traversed and exposed in snapshot', () => {
+  const page = content('<div id="host"></div>');
+  const host = page.window.document.getElementById('host');
+  const shadow = host.attachShadow({ mode: 'open' });
+  shadow.innerHTML = '<button id="shadow-btn">Shadow Action</button>';
+  const snapshot = page.call('SNAPSHOT').data;
+  assert.match(snapshot, /Shadow Action/);
+});
+
+test('browser_wait_for resolves immediately when selector already exists', async () => {
+  const page = content('<div id="ready">Loaded Content</div>');
+  const result = await page.callAsync('WAIT_FOR', { selector: '#ready', timeout_seconds: 1 });
+  assert.equal(result.success, true);
+  assert.match(result.message, /条件已满足/);
 });

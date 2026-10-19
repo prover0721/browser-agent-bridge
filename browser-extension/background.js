@@ -491,6 +491,15 @@ async function handleBridgeCommand(method, params) {
         action = 'GET_TEXT';
         payload = { id: params.element_id, snapshot_id: params.snapshot_id };
         break;
+      case 'browser_wait_for':
+        action = 'WAIT_FOR';
+        payload = {
+          selector: params.selector,
+          text: params.text,
+          state: params.state || 'visible',
+          timeout_seconds: params.timeout_seconds || 10
+        };
+        break;
       default:
         return { error: `不支持的方法: ${method}` };
     }

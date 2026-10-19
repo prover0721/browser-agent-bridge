@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.WebSocketBridge = void 0;
 const ws_1 = require("ws");
 const node_crypto_1 = require("node:crypto");
-const METHODS = new Set(['browser_create_window', 'browser_close_window', 'browser_create_tab', 'browser_list_tabs', 'browser_bind_tab', 'browser_unbind_tab', 'browser_switch_tab', 'browser_close_tab', 'browser_get_active_tab', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_navigate', 'browser_get_text']);
+const METHODS = new Set(['browser_create_window', 'browser_close_window', 'browser_create_tab', 'browser_list_tabs', 'browser_bind_tab', 'browser_unbind_tab', 'browser_switch_tab', 'browser_close_tab', 'browser_get_active_tab', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_navigate', 'browser_get_text', 'browser_wait_for']);
 class WebSocketBridge {
     port;
     wss = null;
@@ -60,13 +60,14 @@ class WebSocketBridge {
                         if (this.routes.size >= 1000)
                             throw new Error('Too many pending commands');
                         const id = (0, node_crypto_1.randomUUID)(); // Never trust IDs or session identities supplied by a relay.
+                        const timeout = Math.min(65000, ((Number(msg.params?.timeout_seconds) || 10) + 5) * 1000);
                         const timer = setTimeout(() => {
                             this.routes.delete(id);
                             if (ws.readyState === ws_1.WebSocket.OPEN)
                                 ws.send(JSON.stringify({ id: msg.id, error: 'Browser command timed out' }));
-                        }, 15000);
+                        }, timeout);
                         this.routes.set(id, { client: ws, originalId: msg.id, timer });
-                        this.browserClient.send(JSON.stringify({ id, method: msg.method, params: msg.params, session_id: sessionId, expires_at: Date.now() + 14000 }));
+                        this.browserClient.send(JSON.stringify({ id, method: msg.method, params: msg.params, session_id: sessionId, expires_at: Date.now() + timeout - 1000 }));
                     }
                     catch (error) {
                         if (typeof msg?.id === 'string')

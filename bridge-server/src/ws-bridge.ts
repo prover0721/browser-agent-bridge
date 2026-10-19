@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
 import { PendingRequest } from './types';
 
-const METHODS = new Set(['browser_create_window', 'browser_close_window', 'browser_create_tab', 'browser_list_tabs', 'browser_bind_tab', 'browser_unbind_tab', 'browser_switch_tab', 'browser_close_tab', 'browser_get_active_tab', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_navigate', 'browser_get_text']);
+const METHODS = new Set(['browser_create_window', 'browser_close_window', 'browser_create_tab', 'browser_list_tabs', 'browser_bind_tab', 'browser_unbind_tab', 'browser_switch_tab', 'browser_close_tab', 'browser_get_active_tab', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_navigate', 'browser_get_text', 'browser_wait_for']);
 
 export class WebSocketBridge {
   private wss: WebSocketServer | null = null;
@@ -49,12 +49,13 @@ export class WebSocketBridge {
             if (!this.browserClient || this.browserClient.readyState !== WebSocket.OPEN) throw new Error('Browser extension is not connected');
             if (this.routes.size >= 1000) throw new Error('Too many pending commands');
             const id = randomUUID(); // Never trust IDs or session identities supplied by a relay.
+            const timeout = Math.min(65000, ((Number(msg.params?.timeout_seconds) || 10) + 5) * 1000);
             const timer = setTimeout(() => {
               this.routes.delete(id);
               if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: msg.id, error: 'Browser command timed out' }));
-            }, 15000);
+            }, timeout);
             this.routes.set(id, { client: ws, originalId: msg.id, timer });
-            this.browserClient.send(JSON.stringify({ id, method: msg.method, params: msg.params, session_id: sessionId, expires_at: Date.now() + 14000 }));
+            this.browserClient.send(JSON.stringify({ id, method: msg.method, params: msg.params, session_id: sessionId, expires_at: Date.now() + timeout - 1000 }));
           } catch (error: any) {
             if (typeof msg?.id === 'string') ws.send(JSON.stringify({ id: msg.id, error: error.message }));
           }

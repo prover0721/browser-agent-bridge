@@ -16,7 +16,7 @@ bridge.start();
 // 创建 MCP Server 实例
 const server = new index_js_1.Server({
     name: 'browser-agent-bridge',
-    version: '1.4.2',
+    version: '1.5.0',
 }, {
     capabilities: {
         tools: {},
@@ -321,6 +321,37 @@ const TOOLS = [
             required: ['seconds'],
         },
     },
+    {
+        name: 'browser_wait_for',
+        description: '【推荐】智能条件等待：毫秒级监听页面 DOM 变化，直到指定的 CSS 选择器或文本内容出现（或消失）时立即返回，告别低效死等。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                selector: {
+                    type: 'string',
+                    description: '可选：等待出现的 CSS 选择器（如 ".el-dialog", "#success-tip", "button[type=submit]"）',
+                },
+                text: {
+                    type: 'string',
+                    description: '可选：页面中需要出现的关键文字内容（如 "操作成功"、"简历选择"）',
+                },
+                state: {
+                    type: 'string',
+                    enum: ['visible', 'hidden'],
+                    description: '等待状态，默认为 "visible"（等待元素可见），传 "hidden" 可用于等待加载遮罩消失',
+                },
+                timeout_seconds: {
+                    type: 'number',
+                    description: '最长超时等待时间（秒），默认 10 秒，最大支持 60 秒',
+                },
+                tab_id: {
+                    type: 'number',
+                    description: '可选：指定要在哪个标签页中等待',
+                },
+            },
+            required: [],
+        },
+    },
 ];
 // 注册工具列表处理器
 server.setRequestHandler(types_js_1.ListToolsRequestSchema, async () => {
@@ -350,6 +381,8 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
                 throw new Error(`Invalid number: ${key}`);
             if (['tab_id', 'element_id', 'max_elements'].includes(key) && (!Number.isInteger(value) || Number(value) < 1))
                 throw new Error(`Expected positive integer: ${key}`);
+            if (key === 'timeout_seconds' && (typeof value !== 'number' || value <= 0 || value > 60))
+                throw new Error('timeout_seconds must be between 0.1 and 60');
             if (typeof value === 'string' && value.length > 100000)
                 throw new Error(`Argument too long: ${key}`);
         }
@@ -363,7 +396,10 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
             };
         }
         // 其它工具全部通过 WebSocket 派发给浏览器扩展执行
-        const result = await bridge.sendCommand(name, args || {});
+        const timeout = name === 'browser_wait_for'
+            ? Math.min(65000, ((Number(args?.timeout_seconds) || 10) + 5) * 1000)
+            : 15000;
+        const result = await bridge.sendCommand(name, args || {}, timeout);
         let textResult = '';
         if (typeof result === 'string') {
             textResult = result;
@@ -390,7 +426,7 @@ async function main() {
     process.once('SIGTERM', () => { bridge.close(); process.exit(0); });
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.4.2 Automatic Connection & Reliability) started successfully over stdio.');
+    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.5.0 Shadow DOM & Smart Waiting) started successfully over stdio.');
 }
 main().catch((err) => {
     console.error('[MCP-Server] Fatal startup error:', err);
