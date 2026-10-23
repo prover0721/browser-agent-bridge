@@ -1,4 +1,14 @@
-# Browser Agent Bridge 1.6.0
+<div align="center">
+
+# 🌐 Browser Agent Bridge
+
+[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+
+**简体中文** | [English](./README_en.md)
+
+</div>
 
 通过本地 MCP 服务和 Chrome / Edge MV3 扩展，让 AI 读取网页、管理标签页、点击和填写表单、全自动文件上传，并复用浏览器现有登录态。
 
