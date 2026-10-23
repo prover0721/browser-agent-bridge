@@ -8,6 +8,8 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { WebSocketBridge } from './ws-bridge';
 import dotenv from 'dotenv';
+import fs from 'node:fs';
+import path from 'node:path';
 
 dotenv.config();
 
@@ -15,11 +17,27 @@ const port = Number(process.env.BRIDGE_PORT || '3088');
 const bridge = new WebSocketBridge(port);
 bridge.start();
 
+const MIME_MAP: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.txt': 'text/plain',
+  '.csv': 'text/csv',
+  '.zip': 'application/zip',
+  '.rar': 'application/x-rar-compressed',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xls': 'application/vnd.ms-excel'
+};
+
 // 创建 MCP Server 实例
 const server = new Server(
   {
     name: 'browser-agent-bridge',
-    version: '1.5.0',
+    version: '1.6.0',
   },
   {
     capabilities: {
@@ -362,6 +380,32 @@ const TOOLS: Tool[] = [
       required: [],
     },
   },
+  {
+    name: 'browser_upload_file',
+    description: '【全自动文件上传】将本地磁盘中的文件（如简历 PDF、图片、表格等）直接注入目标网页的上传控件中，免弹窗、零人工介入。支持指定 element_id（如"选择文件"按钮编号），若不传则自动匹配弹窗内的上传控件。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file_path: {
+          type: 'string',
+          description: '要上传的本地文件绝对路径（例如 "D:\\ai\\antigravity\\work\\简历\\朱宝乐_个人简历.pdf"）',
+        },
+        element_id: {
+          type: 'number',
+          description: '可选：页面中"选择文件"按钮或 input 元素的编号（由 browser_snapshot 返回）',
+        },
+        snapshot_id: {
+          type: 'string',
+          description: '可选：快照 ID，用于确保 DOM 时效性校验',
+        },
+        tab_id: {
+          type: 'number',
+          description: '可选：指定要在哪个标签页中上传文件',
+        },
+      },
+      required: ['file_path'],
+    },
+  },
 ];
 
 // 注册工具列表处理器
@@ -399,6 +443,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
+    if (name === 'browser_upload_file') {
+      const filePath = String(args?.file_path || '');
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`本地文件不存在: ${filePath}`);
+      }
+      const stat = fs.statSync(filePath);
+      if (!stat.isFile()) {
+        throw new Error(`路径不是一个有效的文件: ${filePath}`);
+      }
+      if (stat.size > 20 * 1024 * 1024) {
+        throw new Error(`文件大小超出限制 (最大支持 20MB): 当前大小 ${(stat.size / 1024 / 1024).toFixed(1)}MB`);
+      }
+      const filename = path.basename(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeType = MIME_MAP[ext] || 'application/octet-stream';
+      const fileBuffer = fs.readFileSync(filePath);
+      const base64 = fileBuffer.toString('base64');
+
+      const payload = {
+        element_id: args?.element_id,
+        filename,
+        mimeType,
+        base64,
+        snapshot_id: args?.snapshot_id,
+        tab_id: args?.tab_id
+      };
+
+      const result = await bridge.sendCommand('browser_upload_file', payload, 20000);
+      return {
+        content: [{ type: 'text', text: typeof result === 'string' ? result : JSON.stringify(result, null, 2) }]
+      };
+    }
+
     // 其它工具全部通过 WebSocket 派发给浏览器扩展执行
     const timeout = name === 'browser_wait_for'
       ? Math.min(65000, ((Number(args?.timeout_seconds) || 10) + 5) * 1000)
@@ -431,7 +508,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.5.0 Shadow DOM & Smart Waiting) started successfully over stdio.');
+  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.6.0 File Upload & Shadow DOM) started successfully over stdio.');
 }
 
 main().catch((err) => {

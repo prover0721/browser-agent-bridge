@@ -69,6 +69,8 @@ function connectBridge(force = false) {
       // Serialize commands so another session cannot change global tab context mid-await.
       commandQueue = commandQueue.catch(() => {}).then(async () => {
         await restoredSessions;
+        // Requester already gone: skip work and never send to a closed socket.
+        if (ws.readyState !== WebSocket.OPEN) return;
         displayedSessionId = msg.session_id;
         const session = sessions.get(msg.session_id) || { boundTabId: null, aiWindowId: null };
         boundTabId = session.boundTabId;
@@ -78,7 +80,10 @@ function connectBridge(force = false) {
           if (msg.expires_at && Date.now() > msg.expires_at) throw new Error('指令已过期，请检查页面后重新操作');
           // Never log form values, URLs, or credentials.
           notifySidePanel({ type: 'AUDIT_LOG', log: { method: msg.method, params: { tab_id: msg.params?.tab_id } } });
-          response = await handleBridgeCommand(msg.method, msg.params || {});
+          response = await Promise.race([
+            handleBridgeCommand(msg.method, msg.params || {}),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('页面响应超时，已跳过该指令')), msg.timeoutMs || 25000)),
+          ]);
         } catch (error) { response = { error: error.message }; }
         finally {
           sessions.set(msg.session_id, { boundTabId, aiWindowId });
@@ -154,7 +159,7 @@ async function ensureAiWindow(url, makeActive = false, reuseTab = false) {
     }
     return { tab, isNewWindow: false, windowId: win.id };
   }
-  const created = await chrome.windows.create({ url: url || 'https://www.bing.com', focused: makeActive, state: 'normal' });
+  const created = await chrome.windows.create({ url: url || 'https://www.bing.com', focused: false, state: 'normal' });
   aiWindowId = created.id;
   const tab = created.tabs?.[0] || (await chrome.tabs.query({ windowId: created.id }))[0];
   return { tab, isNewWindow: true, windowId: created.id };
@@ -420,7 +425,7 @@ async function handleBridgeCommand(method, params) {
   }
 
   // ── 2. 页面级信息与跳转命令 ──
-  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll'];
+  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_upload_file'];
   if (mutations.includes(method) && !params.tab_id && !boundTabId) return { error: '修改页面前请指定 tab_id 或绑定标签页' };
   const targetTab = await resolveTargetTab(params.tab_id);
   if (!targetTab || !targetTab.id) {
@@ -498,6 +503,16 @@ async function handleBridgeCommand(method, params) {
           text: params.text,
           state: params.state || 'visible',
           timeout_seconds: params.timeout_seconds || 10
+        };
+        break;
+      case 'browser_upload_file':
+        action = 'UPLOAD_FILE';
+        payload = {
+          id: params.element_id,
+          filename: params.filename,
+          mimeType: params.mimeType,
+          base64: params.base64,
+          snapshot_id: params.snapshot_id
         };
         break;
       default:

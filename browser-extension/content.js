@@ -597,6 +597,125 @@
     });
   }
 
+  /**
+   * 执行文件上传注入（通过 HTML5 DataTransfer 与 File API，免弹窗全自动）
+   */
+  function executeUploadFile(payload) {
+    const { id, filename, mimeType, base64, snapshot_id } = payload;
+    try {
+      if (!base64 || !filename) {
+        return { success: false, error: '缺少文件数据或文件名' };
+      }
+
+      // 1. 将 base64 解码为 Uint8Array
+      let binaryString;
+      if (typeof atob === 'function') {
+        binaryString = atob(base64);
+      } else if (typeof Buffer !== 'undefined') {
+        binaryString = Buffer.from(base64, 'base64').toString('binary');
+      } else {
+        binaryString = '';
+      }
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      // 2. 构造原生 DOM File 对象与 DataTransfer
+      const FileConstructor = typeof File !== 'undefined' ? File : (typeof window !== 'undefined' && window.File ? window.File : null);
+      let file;
+      if (FileConstructor) {
+        try {
+          file = new FileConstructor([bytes], filename, { type: mimeType || 'application/octet-stream' });
+        } catch {
+          file = { name: filename, size: bytes.length, type: mimeType || 'application/octet-stream' };
+        }
+      } else {
+        file = { name: filename, size: bytes.length, type: mimeType || 'application/octet-stream' };
+      }
+
+      const DTConstructor = typeof DataTransfer !== 'undefined' ? DataTransfer : (typeof window !== 'undefined' && window.DataTransfer ? window.DataTransfer : null);
+      const dt = DTConstructor ? new DTConstructor() : { items: { add: () => {} }, files: [file] };
+      if (dt.items && typeof dt.items.add === 'function') {
+        try { dt.items.add(file); } catch {}
+      }
+
+      // 3. 定位目标 input[type="file"]
+      let targetInput = null;
+      let targetContainer = null;
+
+      if (id !== undefined && id !== null) {
+        const el = elementMap.get(Number(id));
+        if (el) {
+          targetContainer = el;
+          if (el.tagName === 'INPUT' && el.type === 'file') {
+            targetInput = el;
+          } else {
+            // 在指定元素内部、父级容器内部或相邻区域智能查找 input[type="file"]
+            targetInput = el.querySelector('input[type="file"]') ||
+                          el.closest('.el-upload, .upload, .ant-upload, form, div')?.querySelector('input[type="file"]');
+          }
+        }
+      }
+
+      // 降级兜底：查找当前活动弹窗内或整个页面中的 input[type="file"]
+      if (!targetInput) {
+        const activeDialog = findActiveDialog();
+        if (activeDialog) {
+          targetInput = activeDialog.querySelector('input[type="file"]');
+        }
+      }
+      if (!targetInput) {
+        targetInput = document.querySelector('input[type="file"]');
+      }
+
+      if (!targetInput) {
+        // 如果页面未采用原生 input[type=file]，尝试直接派发 drop 事件到容器元素
+        if (targetContainer) {
+          targetContainer.dispatchEvent(new DragEvent('dragenter', { bubbles: true, dataTransfer: dt }));
+          targetContainer.dispatchEvent(new DragEvent('dragover', { bubbles: true, dataTransfer: dt }));
+          targetContainer.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt }));
+          return { success: true, message: `已派发拖拽 Drop 事件将文件 [${filename}] 注入目标元素` };
+        }
+        return { success: false, error: '未在页面中找到可接收文件的 input[type="file"] 或目标容器' };
+      }
+
+      // 4. 将文件赋予 input.files 并触发标准事件
+      try {
+        targetInput.files = dt.files;
+      } catch {
+        try {
+          Object.defineProperty(targetInput, 'files', {
+            value: dt.files,
+            writable: true,
+            configurable: true
+          });
+        } catch {}
+      }
+      targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+      targetInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+      // 5. 如果旁边有用于展示文件名的只读文本框（如常见表单结构），协助更新展示
+      const parentForm = targetInput.closest('.el-dialog, form, .el-upload, div');
+      if (parentForm) {
+        const textInputs = parentForm.querySelectorAll('input[type="text"]');
+        for (const ti of textInputs) {
+          if (ti.disabled || ti.readOnly || ti.placeholder?.includes('选择') || ti.placeholder?.includes('文件')) {
+            ti.value = filename;
+            ti.dispatchEvent(new Event('input', { bubbles: true }));
+            ti.dispatchEvent(new Event('change', { bubbles: true }));
+            break;
+          }
+        }
+      }
+
+      return { success: true, message: `已成功注入文件 [${filename}] (${(len / 1024).toFixed(1)} KB) 并触发上传响应` };
+    } catch (err) {
+      return { success: false, error: `文件上传注入失败: ${err.message}` };
+    }
+  }
+
   // 划选监听，自动通知 background/sidepanel
   document.addEventListener('selectionchange', () => {
     const sel = window.getSelection()?.toString().trim();
@@ -646,6 +765,11 @@
       }
       case 'WAIT_FOR': {
         executeWaitFor(payload || {}).then(res => sendResponse(res));
+        break;
+      }
+      case 'UPLOAD_FILE': {
+        const res = executeUploadFile(payload || {});
+        sendResponse(res);
         break;
       }
       default:

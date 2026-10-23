@@ -13,6 +13,14 @@ function content(html: string) {
   Object.defineProperty(window.HTMLElement.prototype, 'offsetParent', { get() { return window.document.body; } });
   window.HTMLElement.prototype.getBoundingClientRect = () => ({ left: 1, top: 1, right: 100, bottom: 30, width: 99, height: 29 });
   window.HTMLElement.prototype.scrollIntoView = () => {};
+  if (!window.DataTransfer) {
+    window.DataTransfer = class DataTransfer {
+      files: any[] = [];
+      items = {
+        add: (file: any) => { this.files.push(file); }
+      };
+    };
+  }
   window.eval(readFileSync(new URL('browser-extension/content.js', root), 'utf8'));
   return {
     window,
@@ -277,4 +285,14 @@ test('browser_wait_for resolves immediately when selector already exists', async
   const result = await page.callAsync('WAIT_FOR', { selector: '#ready', timeout_seconds: 1 });
   assert.equal(result.success, true);
   assert.match(result.message, /条件已满足/);
+});
+
+test('browser_upload_file injects file into target input and triggers change', () => {
+  const page = content('<div class="el-upload"><button id="btn">选择文件</button><input type="file" style="display:none"></div>');
+  const snapshot = page.call('SNAPSHOT').data;
+  const id = Number(snapshot.match(/\[(\d+)\] BUTTON/)[1]);
+  const base64 = Buffer.from('hello pdf content').toString('base64');
+  const res = page.call('UPLOAD_FILE', { id, filename: 'my_resume.pdf', mimeType: 'application/pdf', base64 });
+  assert.equal(res.success, true);
+  assert.match(res.message, /已成功注入文件/);
 });
