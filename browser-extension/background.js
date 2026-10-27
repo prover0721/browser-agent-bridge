@@ -217,6 +217,66 @@ async function ensureContentScriptInjected(tabId) {
 }
 
 /**
+ * 递归扁平化书签树，提取所有有效书签及其完整目录路径
+ */
+function flattenBookmarkTree(nodes, currentPath = '', results = []) {
+  if (!Array.isArray(nodes)) return results;
+  for (const node of nodes) {
+    const nodeTitle = node.title || (node.id === '0' ? '' : '未命名');
+    const folderPath = currentPath ? (nodeTitle ? `${currentPath}/${nodeTitle}` : currentPath) : nodeTitle;
+    if (node.url) {
+      results.push({
+        id: String(node.id),
+        title: node.title || '无标题',
+        url: node.url,
+        folder: currentPath || '根目录',
+        path: folderPath,
+        dateAdded: node.dateAdded
+      });
+    } else if (node.children && node.children.length > 0) {
+      flattenBookmarkTree(node.children, folderPath, results);
+    }
+  }
+  return results;
+}
+
+/**
+ * 检索书签列表
+ */
+async function searchBookmarksList({ query, folder, limit = 50 } = {}) {
+  if (!chrome.bookmarks || typeof chrome.bookmarks.getTree !== 'function') {
+    throw new Error('当前浏览器未提供 bookmarks API 权限，请在扩展管理页重新加载扩展以获取权限');
+  }
+  const tree = await chrome.bookmarks.getTree();
+  const allBookmarks = flattenBookmarkTree(tree);
+
+  let filtered = allBookmarks;
+
+  if (folder && typeof folder === 'string' && folder.trim()) {
+    const fKw = folder.trim().toLowerCase();
+    filtered = filtered.filter(b =>
+      b.folder.toLowerCase().includes(fKw) || b.path.toLowerCase().includes(fKw)
+    );
+  }
+
+  if (query && typeof query === 'string' && query.trim()) {
+    const qKw = query.trim().toLowerCase();
+    filtered = filtered.filter(b =>
+      b.title.toLowerCase().includes(qKw) ||
+      b.url.toLowerCase().includes(qKw) ||
+      b.folder.toLowerCase().includes(qKw)
+    );
+  }
+
+  const max = Number.isInteger(limit) && limit > 0 ? limit : 50;
+  return {
+    total: filtered.length,
+    count: Math.min(filtered.length, max),
+    bookmarks: filtered.slice(0, max)
+  };
+}
+
+/**
  * 处理来自 Bridge Server 的指令
  */
 async function handleBridgeCommand(method, params) {
@@ -413,6 +473,107 @@ async function handleBridgeCommand(method, params) {
     }
     await chrome.tabs.remove(closedId);
     return { result: { message: `已关闭标签页 [ID: ${closedId}] "${targetTab.title}"` } };
+  }
+
+  // ── 1.5 书签与收藏夹检索管理 ──
+  if (method === 'browser_list_bookmarks') {
+    try {
+      const res = await searchBookmarksList({
+        query: params.query,
+        folder: params.folder,
+        limit: params.limit
+      });
+      return { result: res };
+    } catch (e) {
+      return { error: `获取书签失败: ${e.message}` };
+    }
+  }
+
+  if (method === 'browser_open_bookmark') {
+    try {
+      let targetBookmark = null;
+      if (params.id) {
+        if (!chrome.bookmarks || typeof chrome.bookmarks.get !== 'function') {
+          throw new Error('当前浏览器未提供 bookmarks API 权限，请在扩展管理页重新加载扩展以获取权限');
+        }
+        const nodes = await chrome.bookmarks.get(String(params.id));
+        if (nodes && nodes[0] && nodes[0].url) {
+          targetBookmark = {
+            id: String(nodes[0].id),
+            title: nodes[0].title || '无标题',
+            url: nodes[0].url,
+            folder: '',
+            path: nodes[0].title || ''
+          };
+        } else {
+          return { error: `未找到 ID 为 "${params.id}" 的有效书签，或该节点为文件夹` };
+        }
+      } else {
+        if (!params.query && !params.folder) {
+          return { error: '请提供书签搜索关键字 (query) 或收藏夹名称 (folder)，或者直接传入书签 id' };
+        }
+        const searchRes = await searchBookmarksList({
+          query: params.query,
+          folder: params.folder,
+          limit: 100
+        });
+        if (searchRes.total === 0) {
+          return { error: `未找到匹配 "${params.query || params.folder}" 的书签。可使用 browser_list_bookmarks 查询现有书签。` };
+        }
+        // 匹配打分排序：精确匹配 > 开头匹配 > 包含
+        const qLower = (params.query || '').trim().toLowerCase();
+        const sorted = [...searchRes.bookmarks].sort((a, b) => {
+          if (!qLower) return 0;
+          const aTitle = a.title.toLowerCase();
+          const bTitle = b.title.toLowerCase();
+          if (aTitle === qLower && bTitle !== qLower) return -1;
+          if (bTitle === qLower && aTitle !== qLower) return 1;
+          if (aTitle.startsWith(qLower) && !bTitle.startsWith(qLower)) return -1;
+          if (bTitle.startsWith(qLower) && !aTitle.startsWith(qLower)) return 1;
+          return 0;
+        });
+        targetBookmark = sorted[0];
+      }
+
+      if (!targetBookmark || !targetBookmark.url) {
+        return { error: '未获取到目标书签的有效网址' };
+      }
+
+      // 如果指定了 tab_id，则在指定的标签页中跳转
+      if (params.tab_id) {
+        const updatedTab = await chrome.tabs.update(params.tab_id, { url: targetBookmark.url });
+        await waitForTabReady(params.tab_id);
+        return {
+          result: {
+            opened_bookmark: targetBookmark,
+            tab_id: updatedTab.id,
+            window_id: updatedTab.windowId,
+            message: `已在标签页 [ID: ${updatedTab.id}] 中成功打开书签【${targetBookmark.title}】(${targetBookmark.url})`
+          }
+        };
+      }
+
+      // 默认在 AI 专属隔离窗口中新建或复用标签页
+      const createRes = await handleBridgeCommand('browser_create_tab', {
+        url: targetBookmark.url,
+        active: params.active === true,
+        isolate_window: params.isolate_window !== false,
+        auto_bind: params.auto_bind !== false
+      });
+      if (createRes.error) return createRes;
+
+      return {
+        result: {
+          opened_bookmark: targetBookmark,
+          tab_id: createRes.result.tab_id,
+          window_id: createRes.result.window_id,
+          is_ai_window: createRes.result.is_ai_window,
+          message: `已成功在${createRes.result.is_ai_window ? ' AI 专属独立窗口' : '当前窗口'}打开书签【${targetBookmark.title}】(${targetBookmark.url})`
+        }
+      };
+    } catch (e) {
+      return { error: `打开书签失败: ${e.message}` };
+    }
   }
 
   // Navigation without an explicit target starts independent work automatically.

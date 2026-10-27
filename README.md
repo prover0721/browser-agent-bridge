@@ -63,7 +63,10 @@
 | `browser_wait` | 静态等待指定秒数（0–30 秒） |
 | `browser_wait_for` | **【v1.5+ 推荐】智能条件等待**：毫秒级监听 DOM 变化，直到指定选择器或文字出现/消失时立即返回 |
 | `browser_upload_file` | **【v1.6+ 推荐】全自动文件上传**：直接注入本地文件到网页上传控件，免系统弹窗，零人工介入 |
+| `browser_list_bookmarks` | **【v1.7+ 推荐】书签全量检索**：递归检索全量收藏夹（书签栏、其他收藏夹及所有子目录），支持按标题/网址/文件夹模糊搜索 |
+| `browser_open_bookmark` | **【v1.7+ 推荐】书签一键直达**：智能匹配收藏夹目标网站并在【AI 专属独立窗口】中隔离打开或指定标签页跳转 |
 
+- **书签全量检索与一键直达 (`browser_list_bookmarks` / `browser_open_bookmark`)**：扩展后台原生对接 `chrome.bookmarks` API，无需页面加载与 DOM 注入即可瞬时递归检索全量收藏夹层级（涵盖"收藏夹栏"、"其他收藏夹"、"移动设备收藏夹"及任意嵌套子文件夹），支持按标题/网址/文件夹模糊匹配，并自动在 AI 专属隔离窗口中秒级打开。
 - **全自动文件上传 (`browser_upload_file`)**：彻底解决合成事件无法触发 Windows 原生文件选择框的痛点。服务端直接读取本地文件并通过 HTML5 `DataTransfer` 与 `File` API 将文件对象注入页面 `<input type="file">`，自动触发 Vue/React 的 `change` 事件。
 - **深度感知与 Shadow DOM 穿透**：DOM 收集器递归遍历开放式 `shadowRoot` 和同源 `iframe`，覆盖现代 Web Components（如 Shoelace/Lit 等）与嵌套表单。
 - **活动弹窗感知与单选/复选框增强**：自动检测当前置顶的 Dialog / Modal 弹窗（如 Element UI 的 `.el-dialog`）并在快照中单独分区置顶；深度识别 `<label>` 包裹的隐藏式 Radio/Checkbox。
@@ -88,6 +91,6 @@ npm test
 npm audit
 ```
 
-全套 24 项测试覆盖文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 26 项测试覆盖书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。

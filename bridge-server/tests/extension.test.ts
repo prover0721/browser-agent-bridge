@@ -99,7 +99,44 @@ function background() {
       update: async (id: number, options: any) => { windowUpdates.push({ id, ...options }); if (options.focused) foreground = id; return { id }; },
       remove: async (id: number) => { windows.delete(id); for (const tab of tabs.values()) if (tab.windowId === id) tabs.delete(tab.id); },
       onRemoved: event()
-    }, action: { onClicked: event() }, runtime: { sendMessage: () => Promise.resolve(), onMessage: { addListener(fn: any) { runtimeListener = fn; } } }
+    }, action: { onClicked: event() }, runtime: { sendMessage: () => Promise.resolve(), onMessage: { addListener(fn: any) { runtimeListener = fn; } } },
+    bookmarks: {
+      getTree: async () => [
+        {
+          id: '0',
+          title: '',
+          children: [
+            {
+              id: '1',
+              title: '收藏夹栏',
+              children: [
+                { id: '101', title: 'GitHub', url: 'https://github.com', dateAdded: 1000 },
+                { id: '102', title: 'Bing Search', url: 'https://www.bing.com', dateAdded: 1001 }
+              ]
+            },
+            {
+              id: '2',
+              title: '其他收藏夹',
+              children: [
+                {
+                  id: '201',
+                  title: '工作项目',
+                  children: [
+                    { id: '2011', title: '阿里云控制台', url: 'https://aliyun.com', dateAdded: 1002 },
+                    { id: '2012', title: 'Antigravity AI', url: 'https://antigravity.google.com', dateAdded: 1003 }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      get: async (id: string) => {
+        if (id === '101') return [{ id: '101', title: 'GitHub', url: 'https://github.com' }];
+        if (id === '2011') return [{ id: '2011', title: '阿里云控制台', url: 'https://aliyun.com' }];
+        return [];
+      }
+    }
 
   };
   const context = vm.createContext({ chrome, console, WebSocket: FakeSocket, setInterval() {}, setTimeout, clearTimeout, URL });
@@ -295,4 +332,41 @@ test('browser_upload_file injects file into target input and triggers change', (
   const res = page.call('UPLOAD_FILE', { id, filename: 'my_resume.pdf', mimeType: 'application/pdf', base64 });
   assert.equal(res.success, true);
   assert.match(res.message, /已成功注入文件/);
+});
+
+test('browser_list_bookmarks traverses all folders including bookmarks bar and other bookmarks', async () => {
+  const page = background();
+  const allRes = await page.call('browser_list_bookmarks', {});
+  assert.equal(allRes.result.total, 4);
+  assert.equal(allRes.result.bookmarks.length, 4);
+
+  // Search by query
+  const queryRes = await page.call('browser_list_bookmarks', { query: '阿里云' });
+  assert.equal(queryRes.result.total, 1);
+  assert.equal(queryRes.result.bookmarks[0].title, '阿里云控制台');
+  assert.equal(queryRes.result.bookmarks[0].folder, '其他收藏夹/工作项目');
+
+  // Search by folder
+  const folderRes = await page.call('browser_list_bookmarks', { folder: '其他收藏夹' });
+  assert.equal(folderRes.result.total, 2);
+  const titles = folderRes.result.bookmarks.map((b: any) => b.title);
+  assert.ok(titles.includes('阿里云控制台'));
+  assert.ok(titles.includes('Antigravity AI'));
+});
+
+test('browser_open_bookmark opens matched bookmark in isolated AI window or existing tab', async () => {
+  const page = background();
+  // Open by query in isolated window
+  const openRes = await page.call('browser_open_bookmark', { query: '阿里云' });
+  assert.ok(openRes.result);
+  assert.equal(openRes.result.opened_bookmark.title, '阿里云控制台');
+  assert.ok(openRes.result.tab_id);
+  assert.ok(openRes.result.is_ai_window);
+
+  // Open by id in specific tab
+  const openByIdRes = await page.call('browser_open_bookmark', { id: '101', tab_id: 1 });
+  assert.ok(openByIdRes.result);
+  assert.equal(openByIdRes.result.opened_bookmark.title, 'GitHub');
+  assert.equal(openByIdRes.result.tab_id, 1);
+  assert.equal(page.tabs.get(1)!.url, 'https://github.com');
 });

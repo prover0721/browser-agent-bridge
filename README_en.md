@@ -63,8 +63,13 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_wait` | Static pause for specified duration (0–30s) |
 | `browser_wait_for` | **【v1.5+ Recommended】Smart conditional wait**: Millisecond-level DOM observer waiting for selector or text state |
 | `browser_upload_file` | **【v1.6+ Recommended】Automated file upload**: Directly injects local files into page upload inputs without OS dialogs |
+| `browser_list_bookmarks` | **【v1.7+ Recommended】Bookmark Search**: Recursively queries all bookmark trees (Bookmarks Bar, Other Bookmarks, nested folders) |
+| `browser_open_bookmark` | **【v1.7+ Recommended】One-Click Open Bookmark**: Fuzzy matches candidate bookmarks and opens in isolated AI workspace or active tab |
 
 ## Key Architectural Advantages
+
+- **Bookmark Search & One-Click Navigation (`browser_list_bookmarks` / `browser_open_bookmark`)**:
+  Extension background service worker integrates natively with `chrome.bookmarks` API, providing instantaneous recursive traversal of all bookmark folders (including "Bookmarks bar", "Other bookmarks", "Mobile bookmarks", and arbitrary nested directories). Matches by keyword query (title, URL, or folder name) and immediately launches the website in an isolated AI window or specified tab without touching the DOM.
 
 - **Zero-Dialog Automated File Upload (`browser_upload_file`)**:
   Solves the browser security sandbox limitation where synthetic JS clicks cannot trigger the native OS file picker. The Node.js server streams the local file into the browser, and the content script leverages HTML5 `DataTransfer` and `File` APIs to directly inject the file into `<input type="file">`, triggering native `input` and `change` events.
@@ -101,7 +106,7 @@ npm test
 npm audit
 ```
 
-Full suite of **24 automated end-to-end and unit tests** covering file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
+Full suite of **26 automated end-to-end and unit tests** covering bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
 
 ```text
 ✔ connects without pairing and rejects webpage origins
@@ -111,7 +116,9 @@ Full suite of **24 automated end-to-end and unit tests** covering file injection
 ✔ shadowRoot elements are traversed and exposed in snapshot
 ✔ browser_wait_for resolves immediately when selector already exists
 ✔ browser_upload_file injects file into target input and triggers change
-ℹ tests 24 | pass 24 | fail 0
+✔ browser_list_bookmarks traverses all folders including bookmarks bar and other bookmarks
+✔ browser_open_bookmark opens matched bookmark in isolated AI window or existing tab
+ℹ tests 26 | pass 26 | fail 0
 ```
 
 ## License

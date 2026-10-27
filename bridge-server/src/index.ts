@@ -37,7 +37,7 @@ const MIME_MAP: Record<string, string> = {
 const server = new Server(
   {
     name: 'browser-agent-bridge',
-    version: '1.6.0',
+    version: '1.7.0',
   },
   {
     capabilities: {
@@ -169,6 +169,68 @@ const TOOLS: Tool[] = [
           description: '可选：要关闭的标签页 ID',
         },
       },
+    },
+  },
+
+  // ── 1.5 浏览器书签与收藏夹管理 ──
+  {
+    name: 'browser_list_bookmarks',
+    description: '【书签查询】全量递归检索浏览器收藏夹（涵盖"收藏夹栏"、"其他收藏夹"、"移动设备收藏夹"及所有深层子文件夹）。支持按关键字模糊搜索标题/网址，或按文件夹名称筛选。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: '可选：书签标题或网址的搜索关键词（如 "github"、"控制台"、"docs"）',
+        },
+        folder: {
+          type: 'string',
+          description: '可选：收藏夹文件夹名称筛选（如 "其他收藏夹"、"工作"、"AI工具"）',
+        },
+        limit: {
+          type: 'number',
+          description: '可选：最大返回条数（默认 50，避免返回过多）',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'browser_open_bookmark',
+    description: '【书签直达】一键打开浏览器收藏夹中的目标网站。支持输入书签 ID、标题关键词或文件夹筛选，自动匹配最优书签并在【AI 专属独立窗口】中隔离打开或在指定标签页中加载。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: '可选：精准书签 ID（可从 browser_list_bookmarks 中获取）',
+        },
+        query: {
+          type: 'string',
+          description: '可选：书签名称或网址搜索关键词（如 "阿里云"、"GitHub"、"Bilibili"）',
+        },
+        folder: {
+          type: 'string',
+          description: '可选：限定搜索的文件夹名称（如 "其他收藏夹"、"工具"）',
+        },
+        isolate_window: {
+          type: 'boolean',
+          description: '是否放入 AI 专属独立窗口隔离运行，默认为 true（保护用户主窗口）',
+        },
+        active: {
+          type: 'boolean',
+          description: '是否将窗口显示到前台，默认为 false（后台静默运行）',
+        },
+        auto_bind: {
+          type: 'boolean',
+          description: '是否自动锁定为此后台工作标签页，默认为 true',
+        },
+        tab_id: {
+          type: 'number',
+          description: '可选：若指定已有的标签页 ID，则在该标签页中直接跳转打开，而不创建新标签页',
+        },
+      },
+      required: [],
     },
   },
 
@@ -430,7 +492,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (schema.type && typeof value !== schema.type) throw new Error(`Invalid argument type: ${key}`);
       if (schema.enum && !schema.enum.includes(value)) throw new Error(`Invalid argument: ${key}`);
       if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(`Invalid number: ${key}`);
-      if (['tab_id', 'element_id', 'max_elements'].includes(key) && (!Number.isInteger(value) || Number(value) < 1)) throw new Error(`Expected positive integer: ${key}`);
+      if (['tab_id', 'element_id', 'max_elements', 'limit'].includes(key) && (!Number.isInteger(value) || Number(value) < 1)) throw new Error(`Expected positive integer: ${key}`);
       if (key === 'timeout_seconds' && (typeof value !== 'number' || value <= 0 || value > 60)) throw new Error('timeout_seconds must be between 0.1 and 60');
       if (typeof value === 'string' && value.length > 100000) throw new Error(`Argument too long: ${key}`);
     }
@@ -508,7 +570,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.6.0 File Upload & Shadow DOM) started successfully over stdio.');
+  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.7.0 Bookmark & File Upload) started successfully over stdio.');
 }
 
 main().catch((err) => {
