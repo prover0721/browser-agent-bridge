@@ -552,3 +552,52 @@ test('browser_reload_extension reloads extension and synchronizes active tab', a
   await new Promise(r => setTimeout(r, 150));
   assert.equal(reloadCalled, true);
 });
+
+test('browser_hover triggers React conditional hover actions and snapshot reveals them', () => {
+  const html = `
+    <div class="resume-item" id="item-work">
+      <h3>工作经历 (北京字节跳动)</h3>
+    </div>
+  `;
+  const page = content(html);
+  const item = page.window.document.querySelector('.resume-item');
+
+  // 模拟 React 的 onMouseEnter 条件挂载按钮
+  item.addEventListener('mouseenter', () => {
+    if (!item.querySelector('.btn-edit')) {
+      const btn = page.window.document.createElement('button');
+      btn.className = 'btn-edit';
+      btn.textContent = '编辑';
+      btn.onclick = () => { item.setAttribute('data-edited', 'true'); };
+      item.appendChild(btn);
+    }
+  });
+
+  // 1. 测试显式 hover 操作
+  const hoverRes = page.call('HOVER', { selector: '.resume-item' });
+  assert.equal(hoverRes.success, true);
+  assert.match(hoverRes.message, /悬停/);
+
+  // 2. 快照中应成功捕获到 React 动态挂载出来的「编辑」按钮
+  const snapRes = page.call('SNAPSHOT').data;
+  assert.match(snapRes, /BUTTON.*"编辑"/);
+
+  // 3. 点击该编辑按钮能够正常触发响应
+  const idMatch = snapRes.match(/\[(\d+)\] BUTTON.*"编辑"/);
+  assert.ok(idMatch);
+  const clickRes = page.call('CLICK', { id: Number(idMatch[1]) });
+  assert.equal(clickRes.success, true);
+  assert.equal(item.getAttribute('data-edited'), 'true');
+});
+
+test('hover action buttons with visibility: hidden are revealed as [hover] in snapshot', () => {
+  const html = `
+    <div class="annex-box">
+      <span>朱宝乐_个人简历.pdf</span>
+      <button style="visibility: hidden;" class="btn-sync">同步至在线简历</button>
+    </div>
+  `;
+  const page = content(html);
+  const snapRes = page.call('SNAPSHOT').data;
+  assert.match(snapRes, /BUTTON.*\[hover\].*"同步至在线简历"/);
+});

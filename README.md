@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-1.9.2-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-1.9.3-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -57,6 +57,7 @@
 | `browser_switch_tab` | 静默切换受控页面；`focused: true` 才显示到前台 |
 | `browser_snapshot` | 获取交互元素编号和 Snapshot ID（默认视口优先智能瘦身，支持活动弹窗置顶） |
 | `browser_click` / `browser_type` | 点击 / 填写指定元素；支持自定义 Label/Radio 联动与表单响应；可传 `snapshot_id` 校验版本 |
+| `browser_hover` | **【v1.9.3+ 推荐】鼠标悬停/Hover**：精准悬停在卡片或元素上，唤醒 React/Vue 条件浮层按钮（如 BOSS直聘简历的「编辑」「添加」「同步」按钮） |
 | `browser_press` / `browser_scroll` | 派发键盘事件 / 滚动页面（附带滚动位置与进度百分比指示） |
 | `browser_navigate` | 在指定或已绑定页面导航（后台自主导航零打扰） |
 | `browser_get_text` | 提取元素文本、划选文本或正文，最多 20,000 字符 |
@@ -75,6 +76,10 @@
 | `browser_go_back` / `browser_go_forward` / `browser_reload` | **【v1.9+ 推荐】基础导航控制**：控制当前受控标签页后退、前进或硬刷新 |
 | `browser_reload_extension` | **【v1.9.2+ 推荐】一键/自动热重载扩展**：执行 `chrome.runtime.reload()` 秒级重载扩展并同步刷新受控网页，免去手动前往 `chrome://extensions` 页面刷新的繁琐步骤 |
 
+- **React 悬浮浮层与 Hover 按钮智能透出 (v1.9.3 新增)**：
+  - **快照智能扫描唤醒 (`reveal_hover: true`)**：`browser_snapshot` 在收集元素前自动向卡片/列表容器（`.resume-item`, `.card` 等）微秒级派发指针与鼠标 hover 链，促使 React 的 `onMouseEnter` 自动挂载浮层按钮（如 BOSS直聘在线简历页的「编辑」「添加」「同步」按钮），并在快照中标记为 `[hover]` 供 AI 直接点击。
+  - **显式悬停交互工具 (`browser_hover`)**：支持通过 `element_id`、`selector` 或包含的 `text`（如 "工作经历"）将鼠标悬停在指定区块，触发展开下拉菜单或浮层交互。
+  - **放宽 Hover 操作按钮可见性**：识别 `visibility: hidden` 但具备操作语义（“编辑”、“添加”、“同步”、“删除”等）的按钮，不再因常态样式被误杀。
 - **全自动化热重载与开发自愈体系 (v1.9.2 新增)**：
   - **文件变动自动热重载 (File-Watcher Hot Reload)**：Bridge Server 后台实时监听 `browser-extension/` 目录所有文件变动。只要代码修改保存，服务在 300ms 内自动通过 WebSocket 广播热重载信号，扩展调用 `chrome.runtime.reload()` 秒级热重载，实现**保存即生效**。
   - **AI 一键运维工具 (`browser_reload_extension`)**：AI 或开发者可直接派发重载指令，支持可选参数 `reload_tabs: true` 自动同步刷新当前活动网页，使新版脚本立即注入，彻底杜绝孤儿脚本报错（`Extension context invalidated`）。
@@ -118,6 +123,6 @@ npm test
 npm audit
 ```
 
-全套 35 项测试覆盖本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 37 项测试覆盖本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。

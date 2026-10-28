@@ -26,8 +26,23 @@
       }
     }
     const style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden') {
+    if (style.display === 'none') {
       return false;
+    }
+    if (style.visibility === 'hidden') {
+      // 兼容 hover 操作按钮（如 BOSS直聘 等系统的编辑、添加、同步、删除按钮，常态 visibility: hidden，hover 父级才 visible）
+      const text = (el.innerText || el.textContent || '').trim();
+      const cls = typeof el.className === 'string' ? el.className.toLowerCase() : '';
+      const isAction = ['button', 'a'].includes(el.tagName.toLowerCase()) ||
+        el.getAttribute('role') === 'button' ||
+        /btn|button|op|action|edit|add|sync|delete/i.test(cls) ||
+        /编辑|添加|同步|删除|修改|上传|下载|查看/i.test(text);
+      const rect = el.getBoundingClientRect();
+      if (isAction && rect.width > 0 && rect.height > 0) {
+        el.__isHoverAction = true;
+      } else {
+        return false;
+      }
     }
     // 特殊情况：对于 radio / checkbox，许多 UI 组件库（如 Element UI）会设置 opacity: 0，但其父 label 是可见且可交互的
     // 另外：hover 才显示的操作按钮（如 BOSS 简历页的「编辑 / 同步至在线简历」）常态 opacity: 0，
@@ -46,9 +61,10 @@
       }
       // 仍然过滤掉祖先整体隐藏（display:none / visibility:hidden）的情况
       const oStyle = window.getComputedStyle(el);
-      if (oStyle.display === 'none' || oStyle.visibility === 'hidden') {
+      if (oStyle.display === 'none' || (oStyle.visibility === 'hidden' && !el.__isHoverAction)) {
         return false;
       }
+      el.__isHoverAction = true;
     }
     const rect = el.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) {
@@ -232,6 +248,23 @@
       dialogTitle = titleEl ? (titleEl.innerText || titleEl.textContent || '').trim() : '活动弹窗';
     }
 
+    // 智能悬停扫描：针对卡片/列表容器自动派发轻量 hover 唤醒，
+    // 让 React 的 onMouseEnter 自动挂载条件浮层按钮（如 BOSS直聘 .resume-item 的「编辑/添加/同步」）
+    const revealHover = options.reveal_hover !== false;
+    if (revealHover) {
+      try {
+        const hoverTargets = document.querySelectorAll(
+          '.resume-item, .history-item, .annex-item, .section-item, [class*="resume-"], [class*="section-"], [class*="item-box"], [class*="card"], li, tr'
+        );
+        const eventOpts = { bubbles: true, cancelable: true, view: window };
+        for (const target of hoverTargets) {
+          target.dispatchEvent(new PointerEvent('pointerover', eventOpts));
+          target.dispatchEvent(new MouseEvent('mouseover', eventOpts));
+          target.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, cancelable: true, view: window }));
+        }
+      } catch {}
+    }
+
     const allElements = collectAllElements(document);
     const dialogList = [];
     const inViewportList = [];
@@ -325,6 +358,7 @@
           if (type) desc += `(type="${type}")`;
         }
 
+        if (el.__isHoverAction) desc += ' [hover]';
         if (role) desc += `(role="${role}")`;
         if (ariaLabel) desc += ` [aria="${ariaLabel}"]`;
         if (titleAttr && titleAttr !== ariaLabel) desc += ` [title="${titleAttr}"]`;
@@ -461,6 +495,80 @@
       return { success: true, message: `已成功点击元素 [${id}] (${el.tagName})` };
     } catch (err) {
       return { success: false, error: `点击元素 [${id}] 失败: ${err.message}` };
+    }
+  }
+
+  /**
+   * 执行鼠标悬停 (Hover) 操作
+   */
+  function executeHover(payload, expectedSnapshot) {
+    let el = null;
+    let id = payload?.element_id ?? (typeof payload === 'number' ? payload : payload?.id);
+    let selector = payload?.selector;
+    let text = payload?.text;
+
+    if (id !== undefined && id !== null) {
+      if (expectedSnapshot && expectedSnapshot !== snapshotId) {
+        return { success: false, error: '快照已过期，请重新获取' };
+      }
+      el = elementMap.get(Number(id));
+      if (!el) {
+        return { success: false, error: `未找到 ID 为 [${id}] 的元素，请先调用 browser_snapshot 获取最新元素列表。` };
+      }
+    } else if (selector) {
+      el = document.querySelector(selector);
+      if (!el) {
+        return { success: false, error: `未通过选择器 "${selector}" 找到目标元素` };
+      }
+    } else if (text) {
+      // 通过包含文本模糊查找卡片或区块
+      const all = document.querySelectorAll('*');
+      for (const node of all) {
+        if ((node.innerText || node.textContent || '').includes(text) && node.childElementCount <= 10) {
+          el = node;
+          break;
+        }
+      }
+      if (!el) {
+        return { success: false, error: `未找到包含文本 "${text}" 的目标元素` };
+      }
+    } else {
+      return { success: false, error: '请提供 element_id、selector 或 text 参数' };
+    }
+
+    try {
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      const rect = el.getBoundingClientRect();
+      const clientX = rect.left + rect.width / 2;
+      const clientY = rect.top + rect.height / 2;
+      const eventOpts = { bubbles: true, cancelable: true, view: window, clientX, clientY };
+
+      // 向上派发至多 4 层父级 hover，再聚焦并派发目标节点的完整指针/鼠标 hover 事件链
+      try {
+        let hoverNode = el;
+        for (let depth = 0; hoverNode && depth < 4; depth++) {
+          hoverNode.dispatchEvent(new PointerEvent('pointerover', eventOpts));
+          hoverNode.dispatchEvent(new MouseEvent('mouseover', eventOpts));
+          hoverNode.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, cancelable: true, view: window, clientX, clientY }));
+          hoverNode.dispatchEvent(new MouseEvent('mousemove', eventOpts));
+          hoverNode = hoverNode.parentElement;
+        }
+      } catch {}
+
+      el.dispatchEvent(new PointerEvent('pointerover', eventOpts));
+      el.dispatchEvent(new MouseEvent('mouseover', eventOpts));
+      el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, cancelable: true, view: window, clientX, clientY }));
+      el.dispatchEvent(new PointerEvent('pointermove', eventOpts));
+      el.dispatchEvent(new MouseEvent('mousemove', eventOpts));
+
+      const tagName = el.tagName;
+      const label = (el.innerText || el.textContent || '').trim().slice(0, 30);
+      return {
+        success: true,
+        message: `已将鼠标悬停在元素 ${tagName} [${label ? `"${label}"` : (id || selector)}] 上，已成功触发 hover 响应`
+      };
+    } catch (err) {
+      return { success: false, error: `悬停失败: ${err.message}` };
     }
   }
 
@@ -968,6 +1076,11 @@
       }
       case 'CLICK': {
         const res = executeClick(payload.id, payload.snapshot_id);
+        sendResponse(res);
+        break;
+      }
+      case 'HOVER': {
+        const res = executeHover(payload, payload?.snapshot_id);
         sendResponse(res);
         break;
       }

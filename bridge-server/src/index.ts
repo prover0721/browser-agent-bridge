@@ -62,7 +62,7 @@ const MIME_MAP: Record<string, string> = {
 const server = new Server(
   {
     name: 'browser-agent-bridge',
-    version: '1.9.2',
+    version: '1.9.3',
   },
   {
     capabilities: {
@@ -515,6 +515,10 @@ const TOOLS: Tool[] = [
           type: 'boolean',
           description: '可选：是否仅返回当前屏幕视口内的元素（默认为 true，推荐保持开启以大幅节省 Token）',
         },
+        reveal_hover: {
+          type: 'boolean',
+          description: '可选：是否在快照前执行智能悬停扫描，自动唤醒并透出卡片内的 React/CSS 悬浮操作按钮（如 BOSS直聘简历的「编辑」「添加」「同步」按钮），默认为 true',
+        },
         max_elements: {
           type: 'number',
           description: '可选：最多返回的元素数量上限（默认为 50）',
@@ -560,6 +564,33 @@ const TOOLS: Tool[] = [
         },
       },
       required: ['element_id'],
+    },
+  },
+  {
+    name: 'browser_hover',
+    description: '【鼠标悬停/Hover】将光标悬停在指定元素或卡片区域上，用于触发 React/Vue 的 hover 浮层菜单、卡片悬浮操作按钮（如 BOSS直聘在线简历页每一栏的「编辑」「添加」「同步」按钮）或展开下拉菜单。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        snapshot_id: { type: 'string', description: 'Snapshot ID from browser_snapshot; stale revisions are rejected' },
+        element_id: {
+          type: 'number',
+          description: '可选：目标元素的编号（由 browser_snapshot 返回的数字 ID）',
+        },
+        selector: {
+          type: 'string',
+          description: '可选：通过 CSS 选择器定位要悬停的目标容器（如 ".resume-item", ".annex-item"）',
+        },
+        text: {
+          type: 'string',
+          description: '可选：通过包含的文本查找目标容器（如 "工作经历", "附件简历"）',
+        },
+        tab_id: {
+          type: 'number',
+          description: '可选：指定在哪个标签页中执行悬停',
+        },
+      },
+      required: [],
     },
   },
   {
@@ -845,7 +876,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.2 Auto-Reload & Hot-Update) started successfully over stdio.');
+  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.3 Hover Action Revealer & Auto-Reload) started successfully over stdio.');
 }
 
 main().catch((err) => {

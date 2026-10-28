@@ -860,7 +860,7 @@ async function handleBridgeCommand(method, params) {
   }
 
   // ── 2. 页面级信息与跳转命令 ──
-  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_upload_file', 'browser_fill_form'];
+  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_hover', 'browser_press', 'browser_scroll', 'browser_upload_file', 'browser_fill_form'];
   if (mutations.includes(method) && !params.tab_id && !boundTabId) return { error: '修改页面前请指定 tab_id 或绑定标签页' };
   const targetTab = await resolveTargetTab(params.tab_id);
   if (!targetTab || !targetTab.id) {
@@ -903,12 +903,23 @@ async function handleBridgeCommand(method, params) {
         action = 'SNAPSHOT';
         payload = {
           viewport_only: params.viewport_only !== false,
-          max_elements: params.max_elements || 50
+          max_elements: params.max_elements || 50,
+          reveal_hover: params.reveal_hover !== false
         };
         break;
       case 'browser_click':
         action = 'CLICK';
         payload = { id: params.element_id, snapshot_id: params.snapshot_id };
+        break;
+      case 'browser_hover':
+        action = 'HOVER';
+        payload = {
+          id: params.element_id,
+          element_id: params.element_id,
+          selector: params.selector,
+          text: params.text,
+          snapshot_id: params.snapshot_id
+        };
         break;
       case 'browser_type':
         action = 'TYPE';

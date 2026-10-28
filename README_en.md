@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-1.9.2-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-1.9.3-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -57,6 +57,7 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_switch_tab` | Switch controlled tab silently; set `focused: true` to reveal |
 | `browser_snapshot` | Extract structured DOM interactive elements with IDs and Snapshot ID (In-viewport pruning & modal prioritization) |
 | `browser_click` / `browser_type` | Click / type into target elements; supports `snapshot_id` revision matching |
+| `browser_hover` | **【v1.9.3+ Recommended】Mouse Hover Action**: Hovers over elements or cards to trigger React/Vue conditional hover buttons (e.g. BOSS Zhipin "Edit", "Add", "Sync") |
 | `browser_press` / `browser_scroll` | Dispatch keyboard keys / scroll page with pixel and percentage progression |
 | `browser_navigate` | Navigate current or designated tab to a target URL |
 | `browser_get_text` | Extract element text, selected text, or page body text (up to 20,000 chars) |
@@ -76,6 +77,11 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_reload_extension` | **【v1.9.2+ Recommended】Auto / Hot Reload Extension**: Executes `chrome.runtime.reload()` and synchronizes active page reload, bypassing manual `chrome://extensions` visits |
 
 ## Key Architectural Advantages
+
+- **React Floating Actions & Hover Revealer (v1.9.3 New)**:
+  - **Snapshot Smart Hover Pre-Scan (`reveal_hover: true`)**: `browser_snapshot` automatically dispatches lightweight pointer/mouse hover event chains to candidate cards and list containers (`.resume-item`, `.card`, etc.), prompting React's `onMouseEnter` to mount conditionally rendered floating action buttons (such as BOSS Zhipin's "Edit", "Add", and "Sync" buttons) and labels them with `[hover]` for immediate clicking.
+  - **Explicit Hover Tool (`browser_hover`)**: Provides targeted hover simulation by `element_id`, `selector`, or contained `text` to trigger dropdowns and persistent floating popups.
+  - **Relaxed Hover Visibility Detection**: Retains elements styled with `visibility: hidden` or `opacity: 0` that carry action semantics, preventing hover buttons from being falsely pruned before interaction.
 
 - **Automated Hot-Reload & Developer Self-Healing (v1.9.2 New)**:
   - **File-Watcher Hot Reload**: The bridge server monitors all files within `browser-extension/` using `fs.watch`. Any saved edits trigger a WebSocket broadcast within 300ms, triggering instantaneous `chrome.runtime.reload()` inside the browser.
@@ -146,7 +152,7 @@ npm test
 npm audit
 ```
 
-Full suite of **35 automated end-to-end and unit tests** covering download tracking, network sniffing, batch form filling, navigation controls, zero-F12 cookies extraction, extension hot-reloading & tab synchronization, rich text (Quill/WangEditor paragraph retention & word counter sync) & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
+Full suite of **37 automated end-to-end and unit tests** covering download tracking, network sniffing, batch form filling, navigation controls, zero-F12 cookies extraction, extension hot-reloading & tab synchronization, React conditional hover mounting & hover action revealer, rich text (Quill/WangEditor paragraph retention & word counter sync) & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
 
 ```text
 ✔ connects without pairing and rejects webpage origins
@@ -167,7 +173,9 @@ Full suite of **35 automated end-to-end and unit tests** covering download track
 ✔ browser navigation controls (go_back, go_forward, reload) execute successfully
 ✔ rich-text editor (Quill / Boss Zhipin style) retains paragraph structure and updates word counter
 ✔ browser_reload_extension reloads extension and synchronizes active tab
-ℹ tests 35 | pass 35 | fail 0
+✔ browser_hover triggers React conditional hover actions and snapshot reveals them
+✔ hover action buttons with visibility: hidden are revealed as [hover] in snapshot
+ℹ tests 37 | pass 37 | fail 0
 ```
 
 ## License
