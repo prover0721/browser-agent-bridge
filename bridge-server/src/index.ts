@@ -37,7 +37,7 @@ const MIME_MAP: Record<string, string> = {
 const server = new Server(
   {
     name: 'browser-agent-bridge',
-    version: '1.9.0',
+    version: '1.9.1',
   },
   {
     capabilities: {
@@ -802,7 +802,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.0 Downloads & Network Logs & Batch Form) started successfully over stdio.');
+  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.1 Rich-Text Boss / Anti-Paste / Iframes) started successfully over stdio.');
 }
 
 main().catch((err) => {

@@ -508,3 +508,34 @@ test('browser navigation controls (go_back, go_forward, reload) execute successf
   assert.ok(reloadRes.result);
   assert.match(reloadRes.result.message, /刷新/);
 });
+
+test('rich-text editor (Quill / Boss Zhipin style) retains paragraph structure and updates word counter', () => {
+  const html = `
+    <div class="boss-editor-container">
+      <div class="ql-editor" contenteditable="true"><p><br></p></div>
+      <div class="word-counter">字数: 0 / 1000</div>
+    </div>
+  `;
+  const page = content(html);
+  const editor = page.window.document.querySelector('.ql-editor');
+  const counter = page.window.document.querySelector('.word-counter');
+
+  // 模拟类似 BOSS直聘 的字数统计监听
+  const updateCount = () => {
+    const text = (editor.textContent || '').trim();
+    counter.textContent = `字数: ${text.length} / 1000`;
+  };
+  editor.addEventListener('input', updateCount);
+  editor.addEventListener('keyup', updateCount);
+
+  const snapshot = page.call('SNAPSHOT').data;
+  const match = snapshot.match(/\[(\d+)\] EDITABLE\(DIV\)/);
+  assert.ok(match, 'Should identify contenteditable as EDITABLE(DIV)');
+  const id = Number(match[1]);
+
+  const typeRes = page.call('TYPE', { id, text: '主导核心微服务架构改造，QPS提升200%' });
+  assert.equal(typeRes.success, true);
+  assert.ok(editor.textContent.includes('主导核心微服务架构改造'));
+  assert.ok(editor.querySelector('p'), 'Paragraph structure <p> must be preserved for Quill/WangEditor');
+  assert.equal(counter.textContent, `字数: ${'主导核心微服务架构改造，QPS提升200%'.length} / 1000`);
+});

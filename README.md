@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-1.9.1-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -74,6 +74,12 @@
 | `browser_fill_form` | **【v1.9+ 推荐】单次批量快速填表**：一次性填写多个输入框、下拉框或富文本项，通信效率与填表速度提升 10 倍 |
 | `browser_go_back` / `browser_go_forward` / `browser_reload` | **【v1.9+ 推荐】基础导航控制**：控制当前受控标签页后退、前进或硬刷新 |
 
+- **学习通/在线考核平台 iframe 穿透与反粘贴破解 (v1.9.1 新增)**：
+  - **全子框架穿透 (`all_frames: true`)**：扩展脚本自动穿透所有子 iframe 和空白载入页（如在线试卷、问卷星、UEditor 富文本框），消除 iframe 隔离盲区。
+  - **主世界反粘贴/反复制解锁**：在页面主世界无侵入式注入捕获级事件监听器与属性重写，彻底中和各类网课、考试系统对 `paste`、`copy`、`contextmenu` 事件的 `preventDefault()` 与 `return false` 封锁，实现 100% 顺畅填表。
+- **BOSS直聘/Quill/WangEditor 富文本段落保护与字数联动 (v1.9.1 加固)**：
+  - **保留富文本段落与光标折叠**：严格禁止破坏富文本 DOM 树的简单清空，自动保护与补齐根节点段落（如 `<p><br></p>`），精准将光标（Range）聚焦到段落内部再执行文本注入。
+  - **全套键盘与输入事件链触发**：同步派发 `beforeinput`、`input`、`keydown`、`keypress`、`keyup`、`change`，确保 BOSS直聘“字数: 0 / 1000”、表单必填校验及 React/Vue 监听即时生效。
 - **闭环文件流：下载监听与绝对路径追踪 (`browser_wait_for_download` / `browser_get_downloads`)**：借助原生 `chrome.downloads` 权限实时监听点击“导出 Excel”、“下载简历”后的下载任务，在下载完成后毫秒级返回本地磁盘的绝对路径（如 `C:\Users\...\Downloads\report.xlsx`），与 `browser_upload_file` 组合实现真正的文件流双向闭环。
 - **DevTools 终极拼图：动态网络接口嗅探 (`browser_get_network_logs`)**：无侵入式拦截页面 `window.fetch` 与 `XMLHttpRequest`，实时记录最近的 API 请求与干净 JSON 响应体。在处理列表、动态渲染或表格抓取时，AI 可以直取结构化后端数据，免去大量 DOM 视口滚动与快照 Token 消耗。
 - **单次批量表单填充 (`browser_fill_form`)**：针对求职投递、政企申报等长表单，支持一次传入全部字段列表并在页面端批量模拟原生键入与虚拟 DOM 状态更新，单次完成所有表单项填写。
@@ -107,6 +113,6 @@ npm test
 npm audit
 ```
 
-全套 33 项测试覆盖本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、BOSS直聘富文本与复杂弹窗、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 34 项测试覆盖本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。

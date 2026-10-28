@@ -19,6 +19,25 @@
     } catch {}
   }
 
+  // 0. 解除反粘贴、反复制、防右键限制（针对学习通/考试测评系统）
+  try {
+    const unblockEvents = ['paste', 'copy', 'cut', 'contextmenu', 'selectstart'];
+    unblockEvents.forEach((eventType) => {
+      window.addEventListener(eventType, (e) => {
+        // 标记并允许原生剪贴板与输入行为穿透
+        if (e.defaultPrevented && e.__ba_allow_paste) {
+          return;
+        }
+      }, true);
+    });
+    // 清除页面内联 onpaste / oncopy 拦截
+    ['onpaste', 'oncopy', 'oncut', 'oncontextmenu', 'onselectstart'].forEach((prop) => {
+      try {
+        Object.defineProperty(document, prop, { get: () => null, set: () => {}, configurable: true });
+      } catch {}
+    });
+  } catch {}
+
   // 1. Hook window.fetch
   if (typeof window.fetch === 'function') {
     const originalFetch = window.fetch;

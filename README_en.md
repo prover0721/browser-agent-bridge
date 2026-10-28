@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-1.9.1-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -76,6 +76,14 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 
 ## Key Architectural Advantages
 
+- **Iframe Penetration & Anti-Paste Unblocking (v1.9.1 New)**:
+  - **All-Frames Penetration (`all_frames: true`)**: Manifest scripts automatically inject into all sub-frames and nested iframes (such as online test platforms, XueXiTong, WenJuanXing, and UEditor frames), resolving iframe isolation blindspots.
+  - **Main-World Anti-Paste / Anti-Copy Neutralization**: Non-invasively attaches capturing-phase listeners and overrides `onpaste`/`oncopy`/`oncut`/`oncontextmenu` property getters in the Main World, neutralizing exam and learning platforms from blocking paste actions (`preventDefault()`).
+
+- **Rich-Text Editor Paragraph Preservation & Word Counter Sync (v1.9.1 Hardening)**:
+  - **DOM Structure & Paragraph Retention**: Ceased destructive `textContent = ''` wipes on `contenteditable` targets. Retains and ensures root paragraph containers (`<p><br></p>` for Quill, WangEditor, Slate, ProseMirror) with collapsed Selection/Range positioning inside paragraphs before text insertion.
+  - **Full Keyboard & Input Event Pipeline**: Dispatches complete `beforeinput`, `input`, `keydown`, `keypress`, `keyup`, and `change` events, ensuring character counters (such as BOSS Zhipin "字数: 0 / 1000") and reactive frameworks update reliably.
+
 - **Closed-Loop File Flows: Download Tracking (`browser_wait_for_download` / `browser_get_downloads`)**:
   Listens natively via `chrome.downloads` for tasks triggered by clicking "Export Excel", "Download Resume", or "Save PDF". Resolves the absolute local filesystem path (e.g. `C:\Users\...\Downloads\report.xlsx`) upon completion, pairing with `browser_upload_file` for complete bidirectional file workflows.
 
@@ -132,7 +140,7 @@ npm test
 npm audit
 ```
 
-Full suite of **33 automated end-to-end and unit tests** covering download tracking, network sniffing, batch form filling, navigation controls, zero-F12 cookies extraction, rich text & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
+Full suite of **34 automated end-to-end and unit tests** covering download tracking, network sniffing, batch form filling, navigation controls, zero-F12 cookies extraction, rich text (Quill/WangEditor paragraph retention & word counter sync) & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
 
 ```text
 ✔ connects without pairing and rejects webpage origins
@@ -151,7 +159,8 @@ Full suite of **33 automated end-to-end and unit tests** covering download track
 ✔ browser_get_network_logs filters captured Fetch/XHR entries
 ✔ browser_wait_for_download and browser_get_downloads track downloaded local files
 ✔ browser navigation controls (go_back, go_forward, reload) execute successfully
-ℹ tests 33 | pass 33 | fail 0
+✔ rich-text editor (Quill / Boss Zhipin style) retains paragraph structure and updates word counter
+ℹ tests 34 | pass 34 | fail 0
 ```
 
 ## License

@@ -33,7 +33,7 @@ const MIME_MAP = {
 // 创建 MCP Server 实例
 const server = new index_js_1.Server({
     name: 'browser-agent-bridge',
-    version: '1.9.0',
+    version: '1.9.1',
 }, {
     capabilities: {
         tools: {},
@@ -789,7 +789,7 @@ async function main() {
     process.once('SIGTERM', () => { bridge.close(); process.exit(0); });
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.0 Downloads & Network Logs & Batch Form) started successfully over stdio.');
+    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.1 Rich-Text Boss / Anti-Paste / Iframes) started successfully over stdio.');
 }
 main().catch((err) => {
     console.error('[MCP-Server] Fatal startup error:', err);

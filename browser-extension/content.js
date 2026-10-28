@@ -30,6 +30,9 @@
       return false;
     }
     // 特殊情况：对于 radio / checkbox，许多 UI 组件库（如 Element UI）会设置 opacity: 0，但其父 label 是可见且可交互的
+    // 另外：hover 才显示的操作按钮（如 BOSS 简历页的「编辑 / 同步至在线简历」）常态 opacity: 0，
+    // 它们占据真实布局、可点击，只是不透明度为 0。此处不再一律判为不可见，
+    // 交给下面的 getBoundingClientRect 尺寸判断，避免漏掉这类 hover 按钮。
     if (parseFloat(style.opacity) === 0) {
       if ((el.tagName === 'INPUT' && (el.type === 'radio' || el.type === 'checkbox')) || el.matches?.('input[type="radio"], input[type="checkbox"]')) {
         const parentLabel = el.closest('label');
@@ -37,7 +40,15 @@
           return true;
         }
       }
-      return false;
+      const oRect = el.getBoundingClientRect();
+      if (oRect.width <= 0 || oRect.height <= 0) {
+        return false;
+      }
+      // 仍然过滤掉祖先整体隐藏（display:none / visibility:hidden）的情况
+      const oStyle = window.getComputedStyle(el);
+      if (oStyle.display === 'none' || oStyle.visibility === 'hidden') {
+        return false;
+      }
     }
     const rect = el.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) {
@@ -228,9 +239,12 @@
 
     allElements.forEach((el) => {
       if (isInteractiveElement(el)) {
-        // 避免父子元素重复提取（如果父元素已经是 button/a/select/label，则避免重复提取其内部非控件子节点）
+        // 避免父子元素重复提取（如果父元素已经是 button/select/label，则避免重复提取其内部非控件子节点）
+        // 注意：<a> 不在此列——很多站点的 <a> 只是容器，内部每个 <span> 才是真正的操作按钮
+        // （如 BOSS 简历附件行的「预览 / 下载 / 重命名 / 编辑 / 同步至在线简历 / 删除」），
+        // 若把 a 也当作父级剪枝，这些子操作就永远抓不到。
         const parent = el.parentElement;
-        if (parent && isInteractiveElement(parent) && ['button', 'a', 'select', 'label'].includes(parent.tagName.toLowerCase())) {
+        if (parent && isInteractiveElement(parent) && ['button', 'select', 'label'].includes(parent.tagName.toLowerCase())) {
           return;
         }
 
@@ -425,6 +439,19 @@
       const clientY = rect.top + rect.height / 2;
       const eventOpts = { bubbles: true, cancelable: true, view: window, clientX, clientY };
 
+      // 先补一条 hover 事件链：很多站点（如 BOSS 简历页）的操作按钮只有在父级 hover 后
+      // 才挂上事件处理器或被移到可点击层，直接派发 click 会「点了没反应」。
+      try {
+        let hoverNode = el;
+        for (let depth = 0; hoverNode && depth < 4; depth++) {
+          hoverNode.dispatchEvent(new PointerEvent('pointerover', eventOpts));
+          hoverNode.dispatchEvent(new MouseEvent('mouseover', eventOpts));
+          hoverNode.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, cancelable: true, view: window, clientX, clientY }));
+          hoverNode.dispatchEvent(new MouseEvent('mousemove', eventOpts));
+          hoverNode = hoverNode.parentElement;
+        }
+      } catch {}
+
       el.dispatchEvent(new PointerEvent('pointerdown', eventOpts));
       el.dispatchEvent(new MouseEvent('mousedown', eventOpts));
       el.dispatchEvent(new PointerEvent('pointerup', eventOpts));
@@ -452,6 +479,8 @@
       el.focus();
 
       if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
+        // 富文本编辑器（Quill, WangEditor, Slate, ProseMirror, UEditor 等）
+        // 关键防护 1: 避免 el.textContent = '' 彻底摧毁编辑器的段落结构（如 Quill 必须依赖内部的 <p><br></p>）
         if (clearFirst) {
           try {
             const sel = window.getSelection();
@@ -463,24 +492,82 @@
               document.execCommand('delete', false, null);
             }
           } catch {}
-          if (el.innerText !== undefined) el.innerText = '';
-          el.textContent = '';
+          // 兜底：如果选区删除后完全变空（没有子节点），为富文本结构恢复段落占位，防止 Delta/AST 崩溃
+          if (!el.firstElementChild) {
+            const p = document.createElement('p');
+            p.appendChild(document.createElement('br'));
+            el.appendChild(p);
+          }
         }
+
+        // 关键防护 2: 将光标定位到段落内部，确保 document.execCommand 在段落容器内执行
+        let targetBlock = el.querySelector('p, div') || el;
+        try {
+          const sel = window.getSelection();
+          if (sel) {
+            const range = document.createRange();
+            range.selectNodeContents(targetBlock);
+            range.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        } catch {}
+
         let inserted = false;
         try {
           inserted = document.execCommand('insertText', false, text);
         } catch {}
+
+        // 尝试通过编辑器挂载实例同步（如 Quill / WangEditor）
+        try {
+          const quillInst = el.__quill || el.closest('.ql-container')?.__quill || window.Quill?.find?.(el);
+          if (quillInst && typeof quillInst.setText === 'function') {
+            if (clearFirst) {
+              quillInst.setText(text);
+            } else {
+              const len = quillInst.getLength();
+              quillInst.insertText(Math.max(0, len - 1), text);
+            }
+            inserted = true;
+          }
+        } catch {}
+
         if (!inserted) {
+          // 降级兜底：在保持段落或直接内容填充的同时，确保 JSDOM 和常规 contenteditable 都包含文本
           try {
-            el.innerText = (clearFirst ? '' : (el.innerText || '')) + text;
+            if (targetBlock && targetBlock !== el) {
+              const br = targetBlock.querySelector('br');
+              if (br) br.remove();
+              targetBlock.textContent = (clearFirst ? '' : (targetBlock.textContent || '')) + text;
+            }
           } catch {}
           if (!el.textContent || !el.textContent.includes(text)) {
             el.textContent = (clearFirst ? '' : (el.textContent || '')) + text;
           }
+          if (el.innerText !== undefined && (!el.innerText || !el.innerText.includes(text))) {
+            el.innerText = (clearFirst ? '' : (el.innerText || '')) + text;
+          }
         }
-        el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+
+        // 关键防护 3: 派发全套事件链 (beforeinput, input, keydown, keypress, keyup, change)
+        // 确保 BOSS直聘、各类在线表单的「字数统计: 0 / 1000」或前端框架的 watch 侦听到更新
+        const keyOpts = { key: text.slice(-1) || 'a', code: 'KeyA', bubbles: true, cancelable: true, view: window };
+        try {
+          el.dispatchEvent(new KeyboardEvent('keydown', keyOpts));
+          el.dispatchEvent(new KeyboardEvent('keypress', keyOpts));
+        } catch {}
+
+        try {
+          el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
+        } catch {}
+        try {
+          el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+        } catch {}
         el.dispatchEvent(new Event('input', { bubbles: true }));
+
+        try {
+          el.dispatchEvent(new KeyboardEvent('keyup', keyOpts));
+        } catch {}
         el.dispatchEvent(new Event('change', { bubbles: true }));
       } else if ('value' in el) {
         if (clearFirst) {
@@ -501,7 +588,18 @@
           el.value = targetValue;
         }
 
+        const keyOpts = { key: text.slice(-1) || 'a', code: 'KeyA', bubbles: true, cancelable: true, view: window };
+        try {
+          el.dispatchEvent(new KeyboardEvent('keydown', keyOpts));
+          el.dispatchEvent(new KeyboardEvent('keypress', keyOpts));
+        } catch {}
+
         el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+
+        try {
+          el.dispatchEvent(new KeyboardEvent('keyup', keyOpts));
+        } catch {}
         el.dispatchEvent(new Event('change', { bubbles: true }));
       } else {
         return { success: false, error: "目标元素不可输入" };
@@ -940,7 +1038,22 @@
             sendResponse({ success: false, error: '未提供可执行的 JS 表达式' });
             break;
           }
-          const evalResult = window.eval(expr);
+          // 注意：content script 运行在隔离世界，裸 eval 不受页面 CSP 限制；
+          // 而 window.eval 会被页面的 script-src 拦截（BOSS 等站点常见）。
+          // 因此优先用裸 eval，失败再退回 window.eval。
+          let evalResult;
+          let evalError = null;
+          try {
+            // eslint-disable-next-line no-eval
+            evalResult = eval(expr);
+          } catch (e1) {
+            try {
+              evalResult = window.eval(expr);
+            } catch (e2) {
+              evalError = e2;
+            }
+          }
+          if (evalError) throw evalError;
           let serialized;
           if (evalResult === undefined) {
             serialized = 'undefined';
