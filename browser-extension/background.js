@@ -644,6 +644,174 @@ async function handleBridgeCommand(method, params) {
     }
   }
 
+  // ── 1.7 闭环文件流：下载监听与追踪 ──
+  if (method === 'browser_wait_for_download') {
+    if (!chrome.downloads) {
+      return { error: '当前浏览器未提供 downloads API 权限，请在扩展管理页重新加载扩展' };
+    }
+    const timeoutMs = Math.max(1000, Math.min(120000, (Number(params.timeout_seconds) || 30) * 1000));
+    const startTimestamp = Date.now() - 3000;
+
+    return new Promise((resolve) => {
+      let resolved = false;
+      let timer = null;
+
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        chrome.downloads.onCreated.removeListener(onCreated);
+        chrome.downloads.onChanged.removeListener(onChanged);
+      };
+
+      const finish = (result, error) => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        if (error) resolve({ error });
+        else resolve({ result });
+      };
+
+      timer = setTimeout(() => {
+        chrome.downloads.search({ startedAfter: new Date(startTimestamp).toISOString(), limit: 1 }).then((items) => {
+          if (items && items.length > 0) {
+            const item = items[0];
+            finish({
+              id: item.id,
+              filename: item.filename,
+              state: item.state,
+              total_bytes: item.totalBytes,
+              mime: item.mime,
+              url: item.url,
+              message: item.state === 'complete' ? `文件下载已完成: ${item.filename}` : `下载正在进行中 (${item.bytesReceived}/${item.totalBytes})`
+            });
+          } else {
+            finish(null, `等待文件下载超时 (${timeoutMs / 1000}秒)，未检测到新下载任务`);
+          }
+        }).catch(() => {
+          finish(null, `等待文件下载超时 (${timeoutMs / 1000}秒)`);
+        });
+      }, timeoutMs);
+
+      let trackedDownloadId = null;
+
+      const onCreated = (item) => {
+        trackedDownloadId = item.id;
+      };
+
+      const onChanged = (delta) => {
+        if (trackedDownloadId && delta.id !== trackedDownloadId) return;
+        if (delta.state) {
+          if (delta.state.current === 'complete') {
+            chrome.downloads.search({ id: delta.id }).then((items) => {
+              const item = items[0] || {};
+              finish({
+                id: delta.id,
+                filename: item.filename || delta.filename?.current || '未知路径',
+                state: 'complete',
+                total_bytes: item.totalBytes || 0,
+                mime: item.mime || '',
+                url: item.url || '',
+                message: `文件下载已成功完成！本地路径: ${item.filename || delta.filename?.current}`
+              });
+            }).catch(() => {
+              finish({
+                id: delta.id,
+                filename: delta.filename?.current || '未知路径',
+                state: 'complete',
+                message: '文件下载已完成'
+              });
+            });
+          } else if (delta.state.current === 'interrupted') {
+            finish(null, `下载异常中断: ${delta.error?.current || '未知网络错误'}`);
+          }
+        }
+      };
+
+      chrome.downloads.onCreated.addListener(onCreated);
+      chrome.downloads.onChanged.addListener(onChanged);
+
+      // 立即检查一次是否刚刚已完成
+      chrome.downloads.search({ startedAfter: new Date(startTimestamp).toISOString(), limit: 1 }).then((items) => {
+        if (items && items.length > 0 && items[0].state === 'complete') {
+          const item = items[0];
+          finish({
+            id: item.id,
+            filename: item.filename,
+            state: item.state,
+            total_bytes: item.totalBytes,
+            mime: item.mime,
+            url: item.url,
+            message: `文件下载已完成！本地路径: ${item.filename}`
+          });
+        }
+      }).catch(() => {});
+    });
+  }
+
+  if (method === 'browser_get_downloads') {
+    if (!chrome.downloads) {
+      return { error: '当前浏览器未提供 downloads API 权限，请在扩展管理页重新加载扩展' };
+    }
+    try {
+      const limit = Math.min(50, Math.max(1, Number(params.limit) || 10));
+      const queryDetails = { limit };
+      if (params.query) queryDetails.query = [params.query];
+      if (params.state) queryDetails.state = params.state;
+      const items = await chrome.downloads.search(queryDetails);
+      return {
+        result: {
+          total: items.length,
+          downloads: items.map(item => ({
+            id: item.id,
+            filename: item.filename,
+            state: item.state,
+            total_bytes: item.totalBytes,
+            bytes_received: item.bytesReceived,
+            mime: item.mime,
+            url: item.url,
+            start_time: item.startTime,
+            end_time: item.endTime
+          }))
+        }
+      };
+    } catch (e) {
+      return { error: `获取下载记录失败: ${e.message}` };
+    }
+  }
+
+  // ── 1.8 基础历史导航控制 ──
+  if (method === 'browser_go_back') {
+    const targetTab = await resolveTargetTab(params.tab_id);
+    if (!targetTab || !targetTab.id) return { error: '未找到受控标签页' };
+    try {
+      await chrome.tabs.goBack(targetTab.id);
+      return { result: { tab_id: targetTab.id, message: `标签页 [ID: ${targetTab.id}] 已执行后退` } };
+    } catch (e) {
+      return { error: `后退失败: ${e.message}` };
+    }
+  }
+
+  if (method === 'browser_go_forward') {
+    const targetTab = await resolveTargetTab(params.tab_id);
+    if (!targetTab || !targetTab.id) return { error: '未找到受控标签页' };
+    try {
+      await chrome.tabs.goForward(targetTab.id);
+      return { result: { tab_id: targetTab.id, message: `标签页 [ID: ${targetTab.id}] 已执行前进` } };
+    } catch (e) {
+      return { error: `前进失败: ${e.message}` };
+    }
+  }
+
+  if (method === 'browser_reload') {
+    const targetTab = await resolveTargetTab(params.tab_id);
+    if (!targetTab || !targetTab.id) return { error: '未找到受控标签页' };
+    try {
+      await chrome.tabs.reload(targetTab.id, { bypassCache: params.bypass_cache === true });
+      return { result: { tab_id: targetTab.id, message: `标签页 [ID: ${targetTab.id}] 已刷新${params.bypass_cache === true ? ' (强制忽略缓存)' : ''}` } };
+    } catch (e) {
+      return { error: `刷新失败: ${e.message}` };
+    }
+  }
+
   // Navigation without an explicit target starts independent work automatically.
   if (method === 'browser_navigate' && !params.tab_id) {
     if (!params.url) return { error: '未提供导航目标 URL' };
@@ -654,7 +822,7 @@ async function handleBridgeCommand(method, params) {
   }
 
   // ── 2. 页面级信息与跳转命令 ──
-  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_upload_file'];
+  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_upload_file', 'browser_fill_form'];
   if (mutations.includes(method) && !params.tab_id && !boundTabId) return { error: '修改页面前请指定 tab_id 或绑定标签页' };
   const targetTab = await resolveTargetTab(params.tab_id);
   if (!targetTab || !targetTab.id) {
@@ -755,6 +923,22 @@ async function handleBridgeCommand(method, params) {
         action = 'EVALUATE';
         payload = {
           expression: params.expression
+        };
+        break;
+      case 'browser_fill_form':
+        action = 'FILL_FORM';
+        payload = {
+          fields: params.fields,
+          snapshot_id: params.snapshot_id
+        };
+        break;
+      case 'browser_get_network_logs':
+        action = 'GET_NETWORK_LOGS';
+        payload = {
+          url_pattern: params.url_pattern,
+          method: params.method,
+          status_code: params.status_code,
+          limit: params.limit
         };
         break;
       default:

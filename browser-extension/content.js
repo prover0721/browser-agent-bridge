@@ -775,6 +775,77 @@
     }
   }
 
+  // 监听来自网络嗅探器 (network-interceptor.js) 的动态请求日志
+  const networkLogs = [];
+  const MAX_STORED_LOGS = 100;
+  window.addEventListener('message', (event) => {
+    if (event.data && event.data.type === '__BROWSER_AGENT_NETWORK_LOG__' && event.data.entry) {
+      networkLogs.push(event.data.entry);
+      if (networkLogs.length > MAX_STORED_LOGS) {
+        networkLogs.shift();
+      }
+    }
+  });
+
+  /**
+   * 批量表单填充
+   */
+  function executeFillForm(fields, snapshot_id) {
+    if (!Array.isArray(fields) || fields.length === 0) {
+      return { success: false, error: 'fields 必须是非空数组' };
+    }
+    const results = [];
+    let successCount = 0;
+    for (const item of fields) {
+      const id = item.element_id ?? item.id;
+      const text = item.value ?? item.text ?? '';
+      const clearFirst = item.clear_first !== false;
+      const res = executeType(id, String(text), clearFirst, snapshot_id);
+      results.push({
+        element_id: id,
+        success: res.success,
+        error: res.error || null
+      });
+      if (res.success) successCount++;
+    }
+    return {
+      success: successCount > 0,
+      filled_count: successCount,
+      total_fields: fields.length,
+      results,
+      message: `已批量填写 ${successCount}/${fields.length} 个字段`
+    };
+  }
+
+  /**
+   * 获取捕获的动态网络请求日志
+   */
+  function executeGetNetworkLogs(options = {}) {
+    const { url_pattern, method, status_code, limit = 20 } = options;
+    let list = [...networkLogs];
+    if (url_pattern && typeof url_pattern === 'string') {
+      const pat = url_pattern.toLowerCase();
+      list = list.filter(item => item.url && item.url.toLowerCase().includes(pat));
+    }
+    if (method && typeof method === 'string') {
+      const m = method.toUpperCase();
+      list = list.filter(item => item.method === m);
+    }
+    if (status_code !== undefined && status_code !== null) {
+      const code = Number(status_code);
+      list = list.filter(item => item.status === code);
+    }
+    const max = Math.min(100, Math.max(1, Number(limit) || 20));
+    // 返回最新请求列表（按时间倒序）
+    const sliced = list.slice(-max).reverse();
+    return {
+      success: true,
+      total_captured: networkLogs.length,
+      filtered_count: sliced.length,
+      logs: sliced
+    };
+  }
+
   // 划选监听，自动通知 background/sidepanel
   document.addEventListener('selectionchange', () => {
     const sel = window.getSelection()?.toString().trim();
@@ -886,6 +957,16 @@
         } catch (e) {
           sendResponse({ success: false, error: `执行表达式错误: ${e.message}` });
         }
+        break;
+      }
+      case 'FILL_FORM': {
+        const res = executeFillForm(payload?.fields || [], payload?.snapshot_id);
+        sendResponse(res);
+        break;
+      }
+      case 'GET_NETWORK_LOGS': {
+        const res = executeGetNetworkLogs(payload || {});
+        sendResponse(res);
         break;
       }
       default:

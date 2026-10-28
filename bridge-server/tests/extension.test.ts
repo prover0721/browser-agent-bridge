@@ -93,6 +93,9 @@ function background() {
       create: async (options: any) => createTab(options),
       update: async (id: number, options: any) => { tabUpdates.push({ id, ...options }); const tab = tabs.get(id); if (!tab) throw new Error('missing'); Object.assign(tab, options); return tab; },
       remove: async (id: number) => { removed.push(id); tabs.delete(id); },
+      goBack: async (id: number) => {},
+      goForward: async (id: number) => {},
+      reload: async (id: number, opts: any) => {},
       onActivated: event(), onUpdated: event(), onRemoved: event(),
       sendMessage: async (id: number, message: any) => { domCalls.push({ id, ...message }); return { success: true, message: 'done' }; }
     },
@@ -146,6 +149,13 @@ function background() {
         { name: '__Secure-1PSIDTS', value: 'secret_ts_val', domain: '.google.com', path: '/', httpOnly: true, secure: true },
         { name: 'session_id', value: 'sess_12345', domain: '.google.com', path: '/', httpOnly: false, secure: false }
       ]
+    },
+    downloads: {
+      search: async (query: any) => [
+        { id: 1, filename: 'C:\\Users\\Downloads\\test_resume.pdf', state: 'complete', totalBytes: 2048, bytesReceived: 2048, mime: 'application/pdf', url: 'https://example.com/resume.pdf', startTime: '2026-10-28' }
+      ],
+      onCreated: event(),
+      onChanged: event()
     }
 
   };
@@ -421,4 +431,80 @@ test('content script handles GET_STORAGE and EVALUATE without opening F12', () =
   const evalRes = page.call('EVALUATE', { expression: '10 + 32' });
   assert.equal(evalRes.success, true);
   assert.equal(evalRes.data, 42);
+});
+
+test('browser_fill_form batches multiple input fields in a single execution', () => {
+  const page = content(`
+    <form>
+      <input id="name" name="name" value="">
+      <input id="email" name="email" value="">
+      <textarea id="intro"></textarea>
+    </form>
+  `);
+  const snapshot = page.call('SNAPSHOT').data;
+  const ids = Array.from(snapshot.matchAll(/\[(\d+)\] (INPUT|TEXTAREA)/g)).map((m: any) => Number(m[1]));
+  assert.equal(ids.length, 3);
+
+  const fillRes = page.call('FILL_FORM', {
+    fields: [
+      { element_id: ids[0], value: '张三' },
+      { element_id: ids[1], value: 'zhangsan@example.com' },
+      { element_id: ids[2], value: '资深全栈工程师' }
+    ]
+  });
+  assert.equal(fillRes.success, true);
+  assert.equal(fillRes.filled_count, 3);
+  assert.equal(page.window.document.getElementById('name').value, '张三');
+  assert.equal(page.window.document.getElementById('email').value, 'zhangsan@example.com');
+  assert.equal(page.window.document.getElementById('intro').value, '资深全栈工程师');
+});
+
+test('browser_get_network_logs filters captured Fetch/XHR entries', () => {
+  const page = content('<div></div>');
+  page.window.dispatchEvent(new page.window.MessageEvent('message', {
+    data: {
+      type: '__BROWSER_AGENT_NETWORK_LOG__',
+      entry: {
+        id: 'fetch_test1',
+        type: 'fetch',
+        url: 'https://api.example.com/jobs/list?page=1',
+        method: 'GET',
+        status: 200,
+        responseBody: { jobs: [{ title: 'AI Engineer' }] }
+      }
+    }
+  }));
+
+  const logsRes = page.call('GET_NETWORK_LOGS', { url_pattern: 'jobs/list' });
+  assert.equal(logsRes.success, true);
+  assert.equal(logsRes.logs.length, 1);
+  assert.equal(logsRes.logs[0].responseBody.jobs[0].title, 'AI Engineer');
+});
+
+test('browser_wait_for_download and browser_get_downloads track downloaded local files', async () => {
+  const page = background();
+  const waitRes = await page.call('browser_wait_for_download', { timeout_seconds: 1 });
+  assert.ok(waitRes.result);
+  assert.match(waitRes.result.filename, /test_resume\.pdf/);
+  assert.equal(waitRes.result.state, 'complete');
+
+  const listRes = await page.call('browser_get_downloads', { limit: 5 });
+  assert.ok(listRes.result);
+  assert.equal(listRes.result.total, 1);
+  assert.match(listRes.result.downloads[0].filename, /test_resume\.pdf/);
+});
+
+test('browser navigation controls (go_back, go_forward, reload) execute successfully', async () => {
+  const page = background();
+  const backRes = await page.call('browser_go_back', { tab_id: 1 });
+  assert.ok(backRes.result);
+  assert.match(backRes.result.message, /后退/);
+
+  const forwardRes = await page.call('browser_go_forward', { tab_id: 1 });
+  assert.ok(forwardRes.result);
+  assert.match(forwardRes.result.message, /前进/);
+
+  const reloadRes = await page.call('browser_reload', { tab_id: 1, bypass_cache: true });
+  assert.ok(reloadRes.result);
+  assert.match(reloadRes.result.message, /刷新/);
 });

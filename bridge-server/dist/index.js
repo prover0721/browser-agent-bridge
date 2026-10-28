@@ -33,7 +33,7 @@ const MIME_MAP = {
 // 创建 MCP Server 实例
 const server = new index_js_1.Server({
     name: 'browser-agent-bridge',
-    version: '1.8.0',
+    version: '1.9.0',
 }, {
     capabilities: {
         tools: {},
@@ -296,6 +296,154 @@ const TOOLS = [
                 },
             },
             required: ['expression'],
+        },
+    },
+    // ── 1.7 闭环文件流与下载管理 ──
+    {
+        name: 'browser_wait_for_download',
+        description: '【下载感知与本地路径追踪】等待当前页面或会话触发的文件下载完成，并返回该文件在本地操作系统的【绝对文件路径】（如 "C:\\Users\\...\\Downloads\\report.xlsx"）。与 browser_upload_file 组合实现文件上传/下载双向闭环。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                timeout_seconds: {
+                    type: 'number',
+                    description: '可选：最长等待秒数（默认 30 秒，最大 120 秒）',
+                },
+            },
+            required: [],
+        },
+    },
+    {
+        name: 'browser_get_downloads',
+        description: '【下载历史记录查询】查询浏览器最近的下载文件列表，包含本地路径、文件大小、MIME 类型与下载状态。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                query: {
+                    type: 'string',
+                    description: '可选：按文件名或网址搜索下载记录',
+                },
+                state: {
+                    type: 'string',
+                    enum: ['in_progress', 'interrupted', 'complete'],
+                    description: '可选：按状态筛选',
+                },
+                limit: {
+                    type: 'number',
+                    description: '可选：最大返回记录数（默认 10）',
+                },
+            },
+            required: [],
+        },
+    },
+    // ── 1.8 动态网络嗅探与接口日志 ──
+    {
+        name: 'browser_get_network_logs',
+        description: '【DevTools 网络接口嗅探】捕获网页发出的动态异步网络请求（Fetch / XHR）及后端 API 返回的原始 JSON 响应体。免去繁琐的翻页与 DOM 快照，直接读取结构化干净数据。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                url_pattern: {
+                    type: 'string',
+                    description: '可选：网址关键词匹配（如 "api/jobs"、"list"、".json"）',
+                },
+                method: {
+                    type: 'string',
+                    enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+                    description: '可选：HTTP 请求方法',
+                },
+                status_code: {
+                    type: 'number',
+                    description: '可选：HTTP 状态码（如 200）',
+                },
+                limit: {
+                    type: 'number',
+                    description: '可选：最多返回的日志条数（默认 20，最大 100）',
+                },
+                tab_id: {
+                    type: 'number',
+                    description: '可选：指定受控标签页 ID',
+                },
+            },
+            required: [],
+        },
+    },
+    // ── 1.9 批量表单填充与基础历史导航 ──
+    {
+        name: 'browser_fill_form',
+        description: '【单次批量快速填表】一次性批量填写当前页面中的多个输入框、下拉框或富文本项，告别多轮通信往返，长表单填写效率倍增。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                fields: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            element_id: { type: 'number', description: '目标元素的编号 ID' },
+                            value: { type: 'string', description: '要填入的内容' },
+                            clear_first: { type: 'boolean', description: '是否先清空已有内容，默认 true' },
+                        },
+                        required: ['element_id', 'value'],
+                    },
+                    description: '要填写的字段数组列表',
+                },
+                snapshot_id: {
+                    type: 'string',
+                    description: '可选：快照 ID，用于 DOM 时效性版本校验',
+                },
+                tab_id: {
+                    type: 'number',
+                    description: '可选：指定目标标签页 ID',
+                },
+            },
+            required: ['fields'],
+        },
+    },
+    {
+        name: 'browser_go_back',
+        description: '控制当前受控标签页在浏览器历史记录中后退一步（相当于点击浏览器后退按钮）。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                tab_id: {
+                    type: 'number',
+                    description: '可选：指定目标标签页 ID',
+                },
+            },
+            required: [],
+        },
+    },
+    {
+        name: 'browser_go_forward',
+        description: '控制当前受控标签页在浏览器历史记录中前进一步（相当于点击浏览器前进按钮）。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                tab_id: {
+                    type: 'number',
+                    description: '可选：指定目标标签页 ID',
+                },
+            },
+            required: [],
+        },
+    },
+    {
+        name: 'browser_reload',
+        description: '重新加载刷新当前受控标签页（相当于点击浏览器刷新按钮）。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                bypass_cache: {
+                    type: 'boolean',
+                    description: '是否强制忽略缓存硬刷新，默认为 false',
+                },
+                tab_id: {
+                    type: 'number',
+                    description: '可选：指定目标标签页 ID',
+                },
+            },
+            required: [],
         },
     },
     // ── 2. 页面感知与信息提取 ──
@@ -562,10 +710,10 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
                 throw new Error(`Invalid argument: ${key}`);
             if (typeof value === 'number' && !Number.isFinite(value))
                 throw new Error(`Invalid number: ${key}`);
-            if (['tab_id', 'element_id', 'max_elements', 'limit'].includes(key) && (!Number.isInteger(value) || Number(value) < 1))
+            if (['tab_id', 'element_id', 'max_elements', 'limit', 'status_code'].includes(key) && (!Number.isInteger(value) || Number(value) < 1))
                 throw new Error(`Expected positive integer: ${key}`);
-            if (key === 'timeout_seconds' && (typeof value !== 'number' || value <= 0 || value > 60))
-                throw new Error('timeout_seconds must be between 0.1 and 60');
+            if (key === 'timeout_seconds' && (typeof value !== 'number' || value <= 0 || value > 120))
+                throw new Error('timeout_seconds must be between 0.1 and 120');
             if (typeof value === 'string' && value.length > 100000)
                 throw new Error(`Argument too long: ${key}`);
         }
@@ -611,7 +759,9 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
         // 其它工具全部通过 WebSocket 派发给浏览器扩展执行
         const timeout = name === 'browser_wait_for'
             ? Math.min(65000, ((Number(args?.timeout_seconds) || 10) + 5) * 1000)
-            : 15000;
+            : name === 'browser_wait_for_download'
+                ? Math.min(130000, ((Number(args?.timeout_seconds) || 30) + 5) * 1000)
+                : 15000;
         const result = await bridge.sendCommand(name, args || {}, timeout);
         let textResult = '';
         if (typeof result === 'string') {
@@ -639,7 +789,7 @@ async function main() {
     process.once('SIGTERM', () => { bridge.close(); process.exit(0); });
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.8.0 Cookies & Storage & Dialogs) started successfully over stdio.');
+    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.0 Downloads & Network Logs & Batch Form) started successfully over stdio.');
 }
 main().catch((err) => {
     console.error('[MCP-Server] Fatal startup error:', err);

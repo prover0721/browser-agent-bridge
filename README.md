@@ -68,7 +68,15 @@
 | `browser_get_cookies` | **【v1.8+ 推荐】免 F12 直取 Cookies**：原生直取目标站全量 Cookie（包含 `HttpOnly`、`Secure` 敏感鉴权），支持按键名精准查找 |
 | `browser_get_storage` | **【v1.8+ 推荐】免 F12 获取存储**：提取当前页面或指定标签页的 `localStorage` 和 `sessionStorage` 完整键值 |
 | `browser_evaluate` | **【v1.8+ 推荐】免 F12 执行控制台 JS**：在网页上下文中执行自定义只读 JS 表达式，快速提取内部状态或全局变量 |
+| `browser_wait_for_download` | **【v1.9+ 推荐】下载感知与绝对路径追踪**：毫秒级监听导出报表/下载简历完成，直接返回本地操作系统的绝对路径 |
+| `browser_get_downloads` | **【v1.9+ 推荐】下载历史记录查询**：检索最近下载的文件列表、本地存储路径、文件大小与下载状态 |
+| `browser_get_network_logs` | **【v1.9+ 推荐】DevTools 网络接口嗅探**：捕获异步 Fetch/XHR 请求及后端返回的原始 JSON，免去繁琐的 DOM 翻页解析 |
+| `browser_fill_form` | **【v1.9+ 推荐】单次批量快速填表**：一次性填写多个输入框、下拉框或富文本项，通信效率与填表速度提升 10 倍 |
+| `browser_go_back` / `browser_go_forward` / `browser_reload` | **【v1.9+ 推荐】基础导航控制**：控制当前受控标签页后退、前进或硬刷新 |
 
+- **闭环文件流：下载监听与绝对路径追踪 (`browser_wait_for_download` / `browser_get_downloads`)**：借助原生 `chrome.downloads` 权限实时监听点击“导出 Excel”、“下载简历”后的下载任务，在下载完成后毫秒级返回本地磁盘的绝对路径（如 `C:\Users\...\Downloads\report.xlsx`），与 `browser_upload_file` 组合实现真正的文件流双向闭环。
+- **DevTools 终极拼图：动态网络接口嗅探 (`browser_get_network_logs`)**：无侵入式拦截页面 `window.fetch` 与 `XMLHttpRequest`，实时记录最近的 API 请求与干净 JSON 响应体。在处理列表、动态渲染或表格抓取时，AI 可以直取结构化后端数据，免去大量 DOM 视口滚动与快照 Token 消耗。
+- **单次批量表单填充 (`browser_fill_form`)**：针对求职投递、政企申报等长表单，支持一次传入全部字段列表并在页面端批量模拟原生键入与虚拟 DOM 状态更新，单次完成所有表单项填写。
 - **免 F12 直取 Cookies 与存储数据 (`browser_get_cookies` / `browser_get_storage`)**：借助原生 `chrome.cookies` API 无视常规脚本与 `document.cookie` 的 `HttpOnly` 限制，直接导出包含账号核心鉴权在内的敏感字段（如 Gemini/ChatGPT 会话 Cookie）；支持一键读取页面 LocalStorage 与 SessionStorage。
 - **复杂弹窗与富文本编辑器全面加固 (BOSS直聘/微信等)**：
   - **富文本智能透出与原生键入**：深度支持 `contenteditable="true"` 富文本输入区（自动识别为 `EDITABLE(DIV)` 并抓取占位符），在输入时采用原生 `document.execCommand('insertText')` 模拟真实键入，百分百激活 React/Vue 虚拟 DOM 状态（彻底解决聊天输入后“发送”按钮依然置灰无法点击的问题）。
@@ -99,6 +107,6 @@ npm test
 npm audit
 ```
 
-全套 29 项测试覆盖免 F12 获取 Cookies 与存储、BOSS直聘富文本与复杂弹窗、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 33 项测试覆盖本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、BOSS直聘富文本与复杂弹窗、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。

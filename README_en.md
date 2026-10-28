@@ -68,8 +68,22 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_get_cookies` | **【v1.8+ Recommended】Zero-F12 Cookies Extraction**: Directly reads all cookies (including `HttpOnly` and `Secure` session tokens) without opening DevTools |
 | `browser_get_storage` | **【v1.8+ Recommended】Zero-F12 Storage Export**: Extracts full `localStorage` and `sessionStorage` key-value pairs |
 | `browser_evaluate` | **【v1.8+ Recommended】Zero-F12 Console JS Eval**: Evaluates read-only JavaScript expressions in page context to inspect global variables |
+| `browser_wait_for_download` | **【v1.9+ Recommended】Download Tracking**: Monitors triggered downloads and resolves the absolute local filesystem path |
+| `browser_get_downloads` | **【v1.9+ Recommended】Download History Query**: Queries recent downloads, local file paths, MIME types, and progress status |
+| `browser_get_network_logs` | **【v1.9+ Recommended】DevTools Network Sniffer**: Captures async Fetch/XHR requests and response JSON payloads without DOM parsing |
+| `browser_fill_form` | **【v1.9+ Recommended】Batch Form Filling**: Fills multiple form inputs/textareas in a single operation with React/Vue event sync |
+| `browser_go_back` / `browser_go_forward` / `browser_reload` | **【v1.9+ Recommended】Navigation Controls**: Navigates history backward, forward, or forces cache-bypassed reloads |
 
 ## Key Architectural Advantages
+
+- **Closed-Loop File Flows: Download Tracking (`browser_wait_for_download` / `browser_get_downloads`)**:
+  Listens natively via `chrome.downloads` for tasks triggered by clicking "Export Excel", "Download Resume", or "Save PDF". Resolves the absolute local filesystem path (e.g. `C:\Users\...\Downloads\report.xlsx`) upon completion, pairing with `browser_upload_file` for complete bidirectional file workflows.
+
+- **DevTools Network Sniffer (`browser_get_network_logs`)**:
+  Non-invasively wraps in-page `window.fetch` and `XMLHttpRequest`, buffering API request metadata and raw JSON response bodies. Enables AI agents to read clean structured backend data directly, bypassing heavy pagination and viewport DOM consumption.
+
+- **Batch Form Filling (`browser_fill_form`)**:
+  Accepts an array of fields and values to fill entire complex forms in a single round-trip, simulating native typing and keeping virtual DOM state synchronized.
 
 - **Zero-F12 Cookie & Storage Extraction (`browser_get_cookies` / `browser_get_storage`)**:
   Leverages native `chrome.cookies` permissions in the Service Worker to bypass standard web page security boundaries (`document.cookie` cannot access `HttpOnly` cookies). AI Agents can instantaneously retrieve sensitive session tokens (such as `__Secure-1PSID` and `__Secure-1PSIDTS` for Gemini/Google or GitHub/ChatGPT auth cookies) without manual inspection or DevTools.
@@ -118,7 +132,7 @@ npm test
 npm audit
 ```
 
-Full suite of **29 automated end-to-end and unit tests** covering zero-F12 cookies extraction, rich text & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
+Full suite of **33 automated end-to-end and unit tests** covering download tracking, network sniffing, batch form filling, navigation controls, zero-F12 cookies extraction, rich text & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
 
 ```text
 ✔ connects without pairing and rejects webpage origins
@@ -133,7 +147,11 @@ Full suite of **29 automated end-to-end and unit tests** covering zero-F12 cooki
 ✔ boss-dialog contenteditable is recognized as EDITABLE and icon buttons are interactive
 ✔ browser_get_cookies extracts sensitive and HttpOnly cookies by name
 ✔ content script handles GET_STORAGE and EVALUATE without opening F12
-ℹ tests 29 | pass 29 | fail 0
+✔ browser_fill_form batches multiple input fields in a single execution
+✔ browser_get_network_logs filters captured Fetch/XHR entries
+✔ browser_wait_for_download and browser_get_downloads track downloaded local files
+✔ browser navigation controls (go_back, go_forward, reload) execute successfully
+ℹ tests 33 | pass 33 | fail 0
 ```
 
 ## License
