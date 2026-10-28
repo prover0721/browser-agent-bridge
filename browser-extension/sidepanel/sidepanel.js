@@ -118,6 +118,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // 一键重载扩展按钮
+  const btnReloadExt = document.getElementById('btnReloadExt');
+  if (btnReloadExt) {
+    btnReloadExt.addEventListener('click', () => {
+      btnReloadExt.textContent = '重载中...';
+      chrome.runtime.sendMessage({ type: 'RELOAD_EXTENSION' });
+    });
+  }
+
   // 复制划词引用
   btnCopyQuote.addEventListener('click', () => {
     if (!currentSelectedText) {

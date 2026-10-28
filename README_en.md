@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-1.9.1-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-1.9.2-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -73,8 +73,14 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_get_network_logs` | **【v1.9+ Recommended】DevTools Network Sniffer**: Captures async Fetch/XHR requests and response JSON payloads without DOM parsing |
 | `browser_fill_form` | **【v1.9+ Recommended】Batch Form Filling**: Fills multiple form inputs/textareas in a single operation with React/Vue event sync |
 | `browser_go_back` / `browser_go_forward` / `browser_reload` | **【v1.9+ Recommended】Navigation Controls**: Navigates history backward, forward, or forces cache-bypassed reloads |
+| `browser_reload_extension` | **【v1.9.2+ Recommended】Auto / Hot Reload Extension**: Executes `chrome.runtime.reload()` and synchronizes active page reload, bypassing manual `chrome://extensions` visits |
 
 ## Key Architectural Advantages
+
+- **Automated Hot-Reload & Developer Self-Healing (v1.9.2 New)**:
+  - **File-Watcher Hot Reload**: The bridge server monitors all files within `browser-extension/` using `fs.watch`. Any saved edits trigger a WebSocket broadcast within 300ms, triggering instantaneous `chrome.runtime.reload()` inside the browser.
+  - **Agent Reload Tool (`browser_reload_extension`)**: Enables AI agents or developers to programmatically reload the extension and optionally refresh active pages (`reload_tabs: true`) to prevent orphaned content script errors (`Extension context invalidated`).
+  - **Sidepanel Reload Shortcut**: Includes an inline "🔄 重载扩展" button in the side panel dashboard for quick manual reloads.
 
 - **Iframe Penetration & Anti-Paste Unblocking (v1.9.1 New)**:
   - **All-Frames Penetration (`all_frames: true`)**: Manifest scripts automatically inject into all sub-frames and nested iframes (such as online test platforms, XueXiTong, WenJuanXing, and UEditor frames), resolving iframe isolation blindspots.
@@ -140,7 +146,7 @@ npm test
 npm audit
 ```
 
-Full suite of **34 automated end-to-end and unit tests** covering download tracking, network sniffing, batch form filling, navigation controls, zero-F12 cookies extraction, rich text (Quill/WangEditor paragraph retention & word counter sync) & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
+Full suite of **35 automated end-to-end and unit tests** covering download tracking, network sniffing, batch form filling, navigation controls, zero-F12 cookies extraction, extension hot-reloading & tab synchronization, rich text (Quill/WangEditor paragraph retention & word counter sync) & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
 
 ```text
 ✔ connects without pairing and rejects webpage origins
@@ -160,7 +166,8 @@ Full suite of **34 automated end-to-end and unit tests** covering download track
 ✔ browser_wait_for_download and browser_get_downloads track downloaded local files
 ✔ browser navigation controls (go_back, go_forward, reload) execute successfully
 ✔ rich-text editor (Quill / Boss Zhipin style) retains paragraph structure and updates word counter
-ℹ tests 34 | pass 34 | fail 0
+✔ browser_reload_extension reloads extension and synchronizes active tab
+ℹ tests 35 | pass 35 | fail 0
 ```
 
 ## License

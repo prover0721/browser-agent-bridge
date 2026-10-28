@@ -63,6 +63,17 @@ function connectBridge(force = false) {
       let msg;
       try { msg = JSON.parse(event.data); } catch { return; }
       if (msg.type === 'PING' || msg.type === 'PONG') return;
+      if (msg.type === 'HOT_RELOAD_EXTENSION') {
+        console.log('[BrowserAgent] Received hot-reload signal from bridge server, reloading extension...');
+        notifySidePanel({ type: 'STATUS_CHANGE', status: 'reloading', port: currentPort });
+        if (activeControlledTab && activeControlledTab.id) {
+          chrome.tabs.reload(activeControlledTab.id).catch(() => {});
+        }
+        setTimeout(() => {
+          try { chrome.runtime.reload(); } catch {}
+        }, 100);
+        return;
+      }
       if (typeof msg.id !== 'string' || typeof msg.method !== 'string') return;
       // Original 1.4 servers do not send session IDs.
       if (typeof msg.session_id !== 'string') msg.session_id = 'legacy';
@@ -812,6 +823,33 @@ async function handleBridgeCommand(method, params) {
     }
   }
 
+  // ── 1.9 扩展自愈与热重载控制 ──
+  if (method === 'browser_reload_extension') {
+    try {
+      const reloadTabs = params.reload_tabs !== false;
+      let reloadedTabId = null;
+      if (reloadTabs) {
+        const targetTab = await resolveTargetTab(params.tab_id).catch(() => null);
+        if (targetTab && targetTab.id) {
+          reloadedTabId = targetTab.id;
+          await chrome.tabs.reload(reloadedTabId).catch(() => {});
+        }
+      }
+      setTimeout(() => {
+        try { chrome.runtime.reload(); } catch {}
+      }, 100);
+      return {
+        result: {
+          success: true,
+          reloaded_tab_id: reloadedTabId,
+          message: '浏览器扩展已执行重载 (chrome.runtime.reload())' + (reloadedTabId ? `，并已同步刷新标签页 [ID: ${reloadedTabId}]` : '')
+        }
+      };
+    } catch (e) {
+      return { error: `扩展重载失败: ${e.message}` };
+    }
+  }
+
   // Navigation without an explicit target starts independent work automatically.
   if (method === 'browser_navigate' && !params.tab_id) {
     if (!params.url) return { error: '未提供导航目标 URL' };
@@ -945,7 +983,9 @@ async function handleBridgeCommand(method, params) {
         return { error: `不支持的方法: ${method}` };
     }
 
-    const response = await chrome.tabs.sendMessage(targetTab.id, { action, payload });
+    // 固定发给主框架（frameId: 0）：content.js 本身会递归穿透同源 iframe，
+    // 若广播给所有 frame，空白子框架会抢先响应，导致快照返回 about:blank / 0 个元素。
+    const response = await chrome.tabs.sendMessage(targetTab.id, { action, payload }, { frameId: 0 });
     if (!response || !response.success) {
       return { error: response?.error || '操作执行失败' };
     }
@@ -1033,6 +1073,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ success: true });
   } else if (msg.type === 'RECONNECT') {
     connectBridge(true);
+    sendResponse({ success: true });
+  } else if (msg.type === 'RELOAD_EXTENSION') {
+    if (activeControlledTab && activeControlledTab.id) {
+      chrome.tabs.reload(activeControlledTab.id).catch(() => {});
+    }
+    setTimeout(() => {
+      try { chrome.runtime.reload(); } catch {}
+    }, 100);
     sendResponse({ success: true });
   } else if (msg.type === 'TOGGLE_TAB_LOCK') {
     if (boundTabId) {

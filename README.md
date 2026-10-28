@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-1.9.1-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-1.9.2-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -73,7 +73,12 @@
 | `browser_get_network_logs` | **【v1.9+ 推荐】DevTools 网络接口嗅探**：捕获异步 Fetch/XHR 请求及后端返回的原始 JSON，免去繁琐的 DOM 翻页解析 |
 | `browser_fill_form` | **【v1.9+ 推荐】单次批量快速填表**：一次性填写多个输入框、下拉框或富文本项，通信效率与填表速度提升 10 倍 |
 | `browser_go_back` / `browser_go_forward` / `browser_reload` | **【v1.9+ 推荐】基础导航控制**：控制当前受控标签页后退、前进或硬刷新 |
+| `browser_reload_extension` | **【v1.9.2+ 推荐】一键/自动热重载扩展**：执行 `chrome.runtime.reload()` 秒级重载扩展并同步刷新受控网页，免去手动前往 `chrome://extensions` 页面刷新的繁琐步骤 |
 
+- **全自动化热重载与开发自愈体系 (v1.9.2 新增)**：
+  - **文件变动自动热重载 (File-Watcher Hot Reload)**：Bridge Server 后台实时监听 `browser-extension/` 目录所有文件变动。只要代码修改保存，服务在 300ms 内自动通过 WebSocket 广播热重载信号，扩展调用 `chrome.runtime.reload()` 秒级热重载，实现**保存即生效**。
+  - **AI 一键运维工具 (`browser_reload_extension`)**：AI 或开发者可直接派发重载指令，支持可选参数 `reload_tabs: true` 自动同步刷新当前活动网页，使新版脚本立即注入，彻底杜绝孤儿脚本报错（`Extension context invalidated`）。
+  - **侧边栏 (Sidepanel) 一键重载捷径**：在侧边栏配置区直接集成「🔄 重载扩展」按钮，随时可在当前网页一键重启插件与刷新页面。
 - **学习通/在线考核平台 iframe 穿透与反粘贴破解 (v1.9.1 新增)**：
   - **全子框架穿透 (`all_frames: true`)**：扩展脚本自动穿透所有子 iframe 和空白载入页（如在线试卷、问卷星、UEditor 富文本框），消除 iframe 隔离盲区。
   - **主世界反粘贴/反复制解锁**：在页面主世界无侵入式注入捕获级事件监听器与属性重写，彻底中和各类网课、考试系统对 `paste`、`copy`、`contextmenu` 事件的 `preventDefault()` 与 `return false` 封锁，实现 100% 顺畅填表。
@@ -113,6 +118,6 @@ npm test
 npm audit
 ```
 
-全套 34 项测试覆盖本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 35 项测试覆盖本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。

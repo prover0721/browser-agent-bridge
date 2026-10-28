@@ -17,6 +17,31 @@ const port = Number(process.env.BRIDGE_PORT || '3088');
 const bridge = new WebSocketBridge(port);
 bridge.start();
 
+// 自动监听扩展代码变动并向扩展推送热重载信号 (Auto-reload file watcher for extension)
+const possibleExtensionDirs = [
+  path.resolve(__dirname, '../../browser-extension'),
+  path.resolve(__dirname, '../browser-extension'),
+  path.resolve(process.cwd(), 'browser-extension'),
+  path.resolve(process.cwd(), '../browser-extension')
+];
+const extensionDir = possibleExtensionDirs.find(p => fs.existsSync(p));
+let hotReloadDebounce: NodeJS.Timeout | null = null;
+if (extensionDir) {
+  try {
+    fs.watch(extensionDir, { recursive: true }, (eventType, filename) => {
+      if (!filename || filename.endsWith('.swp') || filename.endsWith('~') || filename.startsWith('.')) return;
+      if (hotReloadDebounce) clearTimeout(hotReloadDebounce);
+      hotReloadDebounce = setTimeout(() => {
+        console.error(`[Hot-Reload] Extension file changed (${filename}), broadcasting hot-reload to browser...`);
+        bridge.broadcastHotReload();
+      }, 300);
+    });
+    console.error(`[Hot-Reload] Watching extension directory at ${extensionDir}`);
+  } catch (err: any) {
+    console.error('[Hot-Reload] Failed to watch extension folder:', err.message);
+  }
+}
+
 const MIME_MAP: Record<string, string> = {
   '.pdf': 'application/pdf',
   '.doc': 'application/msword',
@@ -37,7 +62,7 @@ const MIME_MAP: Record<string, string> = {
 const server = new Server(
   {
     name: 'browser-agent-bridge',
-    version: '1.9.1',
+    version: '1.9.2',
   },
   {
     capabilities: {
@@ -694,6 +719,24 @@ const TOOLS: Tool[] = [
       required: ['file_path'],
     },
   },
+  {
+    name: 'browser_reload_extension',
+    description: '【一键/自动热重载扩展】立即重新加载浏览器扩展（执行 chrome.runtime.reload()），免去手动前往 chrome://extensions 页面点击刷新的繁琐步骤。默认自动同步刷新当前受控标签页，使新注入的脚本立即生效。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        reload_tabs: {
+          type: 'boolean',
+          description: '重新加载扩展后是否同时刷新受控网页（使新版脚本立即注入生效），默认为 true',
+        },
+        tab_id: {
+          type: 'number',
+          description: '可选：指定需要同步刷新的标签页 ID',
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 // 注册工具列表处理器
@@ -802,7 +845,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.1 Rich-Text Boss / Anti-Paste / Iframes) started successfully over stdio.');
+  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.2 Auto-Reload & Hot-Update) started successfully over stdio.');
 }
 
 main().catch((err) => {

@@ -19,13 +19,16 @@
   </div>
 
   <div class="card">
-    <div class="card-title">桥接服务连接配置</div>
+    <div class="card-title">
+      <span>桥接服务连接配置</span>
+      <button id="btnReloadExt" class="btn-text" title="立即重新加载扩展并刷新网页">🔄 重载扩展</button>
+    </div>
     <div class="form-row">
       <label for="portInput">本地端口 (WS):</label>
       <input type="number" id="portInput" value="3088" min="1024" max="65535">
       <button id="btnReconnect" class="btn btn-primary">重新连接</button>
     </div>
-    <div class="hint">默认地址: ws://127.0.0.1:3088/ws</div>
+    <div class="hint">默认地址: ws://127.0.0.1:3088/ws (支持文件变动自动热重载)</div>
   </div>
 
   <div class="card">

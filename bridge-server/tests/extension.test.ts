@@ -105,7 +105,7 @@ function background() {
       update: async (id: number, options: any) => { windowUpdates.push({ id, ...options }); if (options.focused) foreground = id; return { id }; },
       remove: async (id: number) => { windows.delete(id); for (const tab of tabs.values()) if (tab.windowId === id) tabs.delete(tab.id); },
       onRemoved: event()
-    }, action: { onClicked: event() }, runtime: { sendMessage: () => Promise.resolve(), onMessage: { addListener(fn: any) { runtimeListener = fn; } } },
+    }, action: { onClicked: event() }, runtime: { reload: () => {}, sendMessage: () => Promise.resolve(), onMessage: { addListener(fn: any) { runtimeListener = fn; } } },
     bookmarks: {
       getTree: async () => [
         {
@@ -538,4 +538,17 @@ test('rich-text editor (Quill / Boss Zhipin style) retains paragraph structure a
   assert.ok(editor.textContent.includes('主导核心微服务架构改造'));
   assert.ok(editor.querySelector('p'), 'Paragraph structure <p> must be preserved for Quill/WangEditor');
   assert.equal(counter.textContent, `字数: ${'主导核心微服务架构改造，QPS提升200%'.length} / 1000`);
+});
+
+test('browser_reload_extension reloads extension and synchronizes active tab', async () => {
+  const page = background();
+  let reloadCalled = false;
+  page.context.chrome.runtime.reload = () => { reloadCalled = true; };
+
+  const reloadRes = await page.call('browser_reload_extension', { reload_tabs: true });
+  assert.ok(reloadRes.result);
+  assert.equal(reloadRes.result.success, true);
+  assert.match(reloadRes.result.message, /chrome\.runtime\.reload/);
+  await new Promise(r => setTimeout(r, 150));
+  assert.equal(reloadCalled, true);
 });

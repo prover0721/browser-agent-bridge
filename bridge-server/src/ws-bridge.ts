@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
 import { PendingRequest } from './types';
 
-const METHODS = new Set(['browser_create_window', 'browser_close_window', 'browser_create_tab', 'browser_list_tabs', 'browser_bind_tab', 'browser_unbind_tab', 'browser_switch_tab', 'browser_close_tab', 'browser_get_active_tab', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_navigate', 'browser_get_text', 'browser_wait_for', 'browser_upload_file', 'browser_list_bookmarks', 'browser_open_bookmark', 'browser_get_cookies', 'browser_get_storage', 'browser_evaluate', 'browser_wait_for_download', 'browser_get_downloads', 'browser_get_network_logs', 'browser_fill_form', 'browser_go_back', 'browser_go_forward', 'browser_reload']);
+const METHODS = new Set(['browser_create_window', 'browser_close_window', 'browser_create_tab', 'browser_list_tabs', 'browser_bind_tab', 'browser_unbind_tab', 'browser_switch_tab', 'browser_close_tab', 'browser_get_active_tab', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_press', 'browser_scroll', 'browser_navigate', 'browser_get_text', 'browser_wait_for', 'browser_upload_file', 'browser_list_bookmarks', 'browser_open_bookmark', 'browser_get_cookies', 'browser_get_storage', 'browser_evaluate', 'browser_wait_for_download', 'browser_get_downloads', 'browser_get_network_logs', 'browser_fill_form', 'browser_go_back', 'browser_go_forward', 'browser_reload', 'browser_reload_extension']);
 
 export class WebSocketBridge {
   private wss: WebSocketServer | null = null;
@@ -111,6 +111,16 @@ export class WebSocketBridge {
       if (!this.isClosing) this.reconnectTimer = setTimeout(() => this.connectAsRelay(), 3000);
     });
   }
+  public broadcastHotReload(): void {
+    if (this.browserClient && this.browserClient.readyState === WebSocket.OPEN) {
+      try {
+        this.browserClient.send(JSON.stringify({ type: 'HOT_RELOAD_EXTENSION' }));
+      } catch (e: any) {
+        console.error('[WS-Bridge] Failed to send hot-reload signal:', e.message);
+      }
+    }
+  }
+
   public async sendCommand(method: string, params: Record<string, any> = {}, timeoutMs = 15000): Promise<any> {
     if (!METHODS.has(method)) throw new Error('Unknown browser command');
     const client = this.isMaster ? this.browserClient : this.relayWs;
