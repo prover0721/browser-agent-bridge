@@ -65,8 +65,20 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_upload_file` | **【v1.6+ Recommended】Automated file upload**: Directly injects local files into page upload inputs without OS dialogs |
 | `browser_list_bookmarks` | **【v1.7+ Recommended】Bookmark Search**: Recursively queries all bookmark trees (Bookmarks Bar, Other Bookmarks, nested folders) |
 | `browser_open_bookmark` | **【v1.7+ Recommended】One-Click Open Bookmark**: Fuzzy matches candidate bookmarks and opens in isolated AI workspace or active tab |
+| `browser_get_cookies` | **【v1.8+ Recommended】Zero-F12 Cookies Extraction**: Directly reads all cookies (including `HttpOnly` and `Secure` session tokens) without opening DevTools |
+| `browser_get_storage` | **【v1.8+ Recommended】Zero-F12 Storage Export**: Extracts full `localStorage` and `sessionStorage` key-value pairs |
+| `browser_evaluate` | **【v1.8+ Recommended】Zero-F12 Console JS Eval**: Evaluates read-only JavaScript expressions in page context to inspect global variables |
 
 ## Key Architectural Advantages
+
+- **Zero-F12 Cookie & Storage Extraction (`browser_get_cookies` / `browser_get_storage`)**:
+  Leverages native `chrome.cookies` permissions in the Service Worker to bypass standard web page security boundaries (`document.cookie` cannot access `HttpOnly` cookies). AI Agents can instantaneously retrieve sensitive session tokens (such as `__Secure-1PSID` and `__Secure-1PSIDTS` for Gemini/Google or GitHub/ChatGPT auth cookies) without manual inspection or DevTools.
+
+- **Complex Dialogs & Rich Text (`contenteditable`) Hardening**:
+  - **Rich Text & Chat Dialog Support**: Automatically detects `contenteditable="true"` containers (like BOSS Zhipin, WeChat Web, Quill, Slate, ProseMirror) as `EDITABLE(DIV)` with placeholder extraction.
+  - **Native Document Typing**: Simulates real human typing via `document.execCommand('insertText')` and `beforeinput` events, ensuring React and Vue virtual DOM state trees stay synchronized so that "Send" buttons light up automatically.
+  - **Textless Icon & Close Button Detection**: Recognizes action buttons containing SVG or icon fonts without text (e.g. `✕` close buttons and send icons).
+  - **Broadened Dialog Selectors**: Fully matches BOSS Zhipin (`.boss-dialog`, `.chat-conversation`), Arco Design, Naive UI, TDesign, and modern SaaS popup containers.
 
 - **Bookmark Search & One-Click Navigation (`browser_list_bookmarks` / `browser_open_bookmark`)**:
   Extension background service worker integrates natively with `chrome.bookmarks` API, providing instantaneous recursive traversal of all bookmark folders (including "Bookmarks bar", "Other bookmarks", "Mobile bookmarks", and arbitrary nested directories). Matches by keyword query (title, URL, or folder name) and immediately launches the website in an isolated AI window or specified tab without touching the DOM.
@@ -106,7 +118,7 @@ npm test
 npm audit
 ```
 
-Full suite of **26 automated end-to-end and unit tests** covering bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
+Full suite of **29 automated end-to-end and unit tests** covering zero-F12 cookies extraction, rich text & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
 
 ```text
 ✔ connects without pairing and rejects webpage origins
@@ -118,7 +130,10 @@ Full suite of **26 automated end-to-end and unit tests** covering bookmark searc
 ✔ browser_upload_file injects file into target input and triggers change
 ✔ browser_list_bookmarks traverses all folders including bookmarks bar and other bookmarks
 ✔ browser_open_bookmark opens matched bookmark in isolated AI window or existing tab
-ℹ tests 26 | pass 26 | fail 0
+✔ boss-dialog contenteditable is recognized as EDITABLE and icon buttons are interactive
+✔ browser_get_cookies extracts sensitive and HttpOnly cookies by name
+✔ content script handles GET_STORAGE and EVALUATE without opening F12
+ℹ tests 29 | pass 29 | fail 0
 ```
 
 ## License

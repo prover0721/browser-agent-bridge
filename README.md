@@ -65,7 +65,15 @@
 | `browser_upload_file` | **【v1.6+ 推荐】全自动文件上传**：直接注入本地文件到网页上传控件，免系统弹窗，零人工介入 |
 | `browser_list_bookmarks` | **【v1.7+ 推荐】书签全量检索**：递归检索全量收藏夹（书签栏、其他收藏夹及所有子目录），支持按标题/网址/文件夹模糊搜索 |
 | `browser_open_bookmark` | **【v1.7+ 推荐】书签一键直达**：智能匹配收藏夹目标网站并在【AI 专属独立窗口】中隔离打开或指定标签页跳转 |
+| `browser_get_cookies` | **【v1.8+ 推荐】免 F12 直取 Cookies**：原生直取目标站全量 Cookie（包含 `HttpOnly`、`Secure` 敏感鉴权），支持按键名精准查找 |
+| `browser_get_storage` | **【v1.8+ 推荐】免 F12 获取存储**：提取当前页面或指定标签页的 `localStorage` 和 `sessionStorage` 完整键值 |
+| `browser_evaluate` | **【v1.8+ 推荐】免 F12 执行控制台 JS**：在网页上下文中执行自定义只读 JS 表达式，快速提取内部状态或全局变量 |
 
+- **免 F12 直取 Cookies 与存储数据 (`browser_get_cookies` / `browser_get_storage`)**：借助原生 `chrome.cookies` API 无视常规脚本与 `document.cookie` 的 `HttpOnly` 限制，直接导出包含账号核心鉴权在内的敏感字段（如 Gemini/ChatGPT 会话 Cookie）；支持一键读取页面 LocalStorage 与 SessionStorage。
+- **复杂弹窗与富文本编辑器全面加固 (BOSS直聘/微信等)**：
+  - **富文本智能透出与原生键入**：深度支持 `contenteditable="true"` 富文本输入区（自动识别为 `EDITABLE(DIV)` 并抓取占位符），在输入时采用原生 `document.execCommand('insertText')` 模拟真实键入，百分百激活 React/Vue 虚拟 DOM 状态（彻底解决聊天输入后“发送”按钮依然置灰无法点击的问题）。
+  - **无文字图标与关闭按钮深度捕获**：放开交互元素对文本内容的硬性依赖，精准识别 SVG 图标、字体图标、关闭按钮（`✕`）与发送按钮。
+  - **全主流弹窗/抽屉库覆盖**：`findActiveDialog` 全面扩充 BOSS直聘（`.boss-dialog`, `.chat-conversation`）、Arco Design、Naive UI、TDesign、Semi Design 等国产 SaaS 弹窗置顶。
 - **书签全量检索与一键直达 (`browser_list_bookmarks` / `browser_open_bookmark`)**：扩展后台原生对接 `chrome.bookmarks` API，无需页面加载与 DOM 注入即可瞬时递归检索全量收藏夹层级（涵盖"收藏夹栏"、"其他收藏夹"、"移动设备收藏夹"及任意嵌套子文件夹），支持按标题/网址/文件夹模糊匹配，并自动在 AI 专属隔离窗口中秒级打开。
 - **全自动文件上传 (`browser_upload_file`)**：彻底解决合成事件无法触发 Windows 原生文件选择框的痛点。服务端直接读取本地文件并通过 HTML5 `DataTransfer` 与 `File` API 将文件对象注入页面 `<input type="file">`，自动触发 Vue/React 的 `change` 事件。
 - **深度感知与 Shadow DOM 穿透**：DOM 收集器递归遍历开放式 `shadowRoot` 和同源 `iframe`，覆盖现代 Web Components（如 Shoelace/Lit 等）与嵌套表单。
@@ -91,6 +99,6 @@ npm test
 npm audit
 ```
 
-全套 26 项测试覆盖书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 29 项测试覆盖免 F12 获取 Cookies 与存储、BOSS直聘富文本与复杂弹窗、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。

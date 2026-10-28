@@ -576,6 +576,74 @@ async function handleBridgeCommand(method, params) {
     }
   }
 
+  // ── 1.6 开发者信息免 F12 获取 (Cookies) ──
+  if (method === 'browser_get_cookies') {
+    try {
+      if (!chrome.cookies || typeof chrome.cookies.getAll !== 'function') {
+        return { error: '当前浏览器未提供 cookies API 权限，请在扩展管理页重新加载扩展以获取权限' };
+      }
+      let targetUrl = params.url;
+      let targetDomain = params.domain;
+
+      if (!targetUrl && !targetDomain) {
+        const targetTab = await resolveTargetTab(params.tab_id);
+        if (targetTab && targetTab.url) {
+          targetUrl = targetTab.url;
+        }
+      }
+
+      if (!targetUrl && !targetDomain) {
+        return { error: '请提供目标网址 (url) 或域名 (domain)，或确保浏览器有打开的受控标签页' };
+      }
+
+      const queryDetails = {};
+      if (targetUrl) {
+        if (!/^https?:\/\//i.test(targetUrl)) targetUrl = 'https://' + targetUrl;
+        queryDetails.url = targetUrl;
+      }
+      if (targetDomain) {
+        queryDetails.domain = targetDomain.replace(/^[.]+/, '');
+      }
+
+      const cookies = await chrome.cookies.getAll(queryDetails);
+      let filtered = cookies;
+
+      const filterNames = Array.isArray(params.names) ? params.names : (params.name ? [params.name] : null);
+      if (filterNames && filterNames.length > 0) {
+        filtered = filtered.filter(c => filterNames.includes(c.name));
+      }
+
+      const map = {};
+      for (const c of filtered) {
+        map[c.name] = c.value;
+      }
+
+      const cookieHeader = filtered.map(c => `${c.name}=${c.value}`).join('; ');
+
+      return {
+        result: {
+          url: targetUrl || null,
+          domain: targetDomain || null,
+          total: filtered.length,
+          cookie_header: cookieHeader,
+          cookies_map: map,
+          cookies: filtered.map(c => ({
+            name: c.name,
+            value: c.value,
+            domain: c.domain,
+            path: c.path,
+            secure: c.secure,
+            httpOnly: c.httpOnly,
+            sameSite: c.sameSite,
+            expirationDate: c.expirationDate
+          }))
+        }
+      };
+    } catch (e) {
+      return { error: `获取 Cookies 失败: ${e.message}` };
+    }
+  }
+
   // Navigation without an explicit target starts independent work automatically.
   if (method === 'browser_navigate' && !params.tab_id) {
     if (!params.url) return { error: '未提供导航目标 URL' };
@@ -674,6 +742,19 @@ async function handleBridgeCommand(method, params) {
           mimeType: params.mimeType,
           base64: params.base64,
           snapshot_id: params.snapshot_id
+        };
+        break;
+      case 'browser_get_storage':
+        action = 'GET_STORAGE';
+        payload = {
+          type: params.type || 'all',
+          keys: params.keys
+        };
+        break;
+      case 'browser_evaluate':
+        action = 'EVALUATE';
+        payload = {
+          expression: params.expression
         };
         break;
       default:

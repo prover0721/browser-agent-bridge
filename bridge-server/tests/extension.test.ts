@@ -21,6 +21,9 @@ function content(html: string) {
       };
     };
   }
+  if (!window.document.execCommand) {
+    window.document.execCommand = () => false;
+  }
   window.eval(readFileSync(new URL('browser-extension/content.js', root), 'utf8'));
   return {
     window,
@@ -136,6 +139,13 @@ function background() {
         if (id === '2011') return [{ id: '2011', title: '阿里云控制台', url: 'https://aliyun.com' }];
         return [];
       }
+    },
+    cookies: {
+      getAll: async (query: any) => [
+        { name: '__Secure-1PSID', value: 'secret_psid_val', domain: '.google.com', path: '/', httpOnly: true, secure: true },
+        { name: '__Secure-1PSIDTS', value: 'secret_ts_val', domain: '.google.com', path: '/', httpOnly: true, secure: true },
+        { name: 'session_id', value: 'sess_12345', domain: '.google.com', path: '/', httpOnly: false, secure: false }
+      ]
     }
 
   };
@@ -369,4 +379,46 @@ test('browser_open_bookmark opens matched bookmark in isolated AI window or exis
   assert.equal(openByIdRes.result.opened_bookmark.title, 'GitHub');
   assert.equal(openByIdRes.result.tab_id, 1);
   assert.equal(page.tabs.get(1)!.url, 'https://github.com');
+});
+
+test('boss-dialog contenteditable is recognized as EDITABLE and icon buttons are interactive', () => {
+  const page = content(`
+    <div class="boss-dialog">
+      <div class="chat-title">BOSS沟通窗口</div>
+      <div contenteditable="true" data-placeholder="输入消息给HR..."></div>
+      <div class="close-btn" style="cursor: pointer;"><svg><path d="M0 0"></path></svg></div>
+    </div>
+  `);
+  const snapshot = page.call('SNAPSHOT').data;
+  assert.match(snapshot, /当前活动弹窗: BOSS沟通窗口/);
+  assert.match(snapshot, /EDITABLE\(DIV\).*输入消息给HR\.\.\./);
+  assert.match(snapshot, /\[\d+\] DIV.*icon:close/);
+  const match = snapshot.match(/\[(\d+)\] EDITABLE\(DIV\)/);
+  assert.ok(match);
+  const id = Number(match[1]);
+  const typeRes = page.call('TYPE', { id, text: '你好，请问岗位的技术栈是什么？' });
+  assert.equal(typeRes.success, true);
+  assert.match(page.window.document.querySelector('[contenteditable="true"]').textContent, /你好，请问岗位的技术栈是什么？/);
+});
+
+test('browser_get_cookies extracts sensitive and HttpOnly cookies by name', async () => {
+  const page = background();
+  const res = await page.call('browser_get_cookies', { url: 'https://gemini.google.com', names: ['__Secure-1PSID', '__Secure-1PSIDTS'] });
+  assert.ok(res.result);
+  assert.equal(res.result.total, 2);
+  assert.equal(res.result.cookies_map['__Secure-1PSID'], 'secret_psid_val');
+  assert.equal(res.result.cookies_map['__Secure-1PSIDTS'], 'secret_ts_val');
+  assert.match(res.result.cookie_header, /__Secure-1PSID=secret_psid_val/);
+});
+
+test('content script handles GET_STORAGE and EVALUATE without opening F12', () => {
+  const page = content('<div><div id="test">Text</div></div>');
+  page.window.localStorage.setItem('auth_token', 'token_abc123');
+  const storageRes = page.call('GET_STORAGE', { type: 'local' });
+  assert.equal(storageRes.success, true);
+  assert.equal(storageRes.data.localStorage.auth_token, 'token_abc123');
+
+  const evalRes = page.call('EVALUATE', { expression: '10 + 32' });
+  assert.equal(evalRes.success, true);
+  assert.equal(evalRes.data, 42);
 });

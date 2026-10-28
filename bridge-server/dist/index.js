@@ -33,7 +33,7 @@ const MIME_MAP = {
 // 创建 MCP Server 实例
 const server = new index_js_1.Server({
     name: 'browser-agent-bridge',
-    version: '1.7.0',
+    version: '1.8.0',
 }, {
     capabilities: {
         tools: {},
@@ -222,6 +222,80 @@ const TOOLS = [
                 },
             },
             required: [],
+        },
+    },
+    // ── 1.6 开发者信息免 F12 获取 (Cookies, Storage, Console) ──
+    {
+        name: 'browser_get_cookies',
+        description: '【免 F12 直取 Cookies】原生直接获取目标网址（如 "https://gemini.google.com"）或当前页面的所有 Cookie（包含 HttpOnly、Secure 等字段，无视普通脚本限制）。支持按指定 Cookie 名称（如 "__Secure-1PSID"）精确提取键值对，告别繁琐的手动 F12 复制。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                url: {
+                    type: 'string',
+                    description: '可选：目标网站完整网址（如 "https://gemini.google.com"），不传则默认使用当前受控标签页网址',
+                },
+                domain: {
+                    type: 'string',
+                    description: '可选：目标域名（如 "google.com"、"github.com"）',
+                },
+                name: {
+                    type: 'string',
+                    description: '可选：单个 Cookie 名称进行精确查找',
+                },
+                names: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: '可选：多个 Cookie 名称数组（如 ["__Secure-1PSID", "__Secure-1PSIDTS"]）',
+                },
+                tab_id: {
+                    type: 'number',
+                    description: '可选：指定标签页 ID 获取其 Cookie',
+                },
+            },
+            required: [],
+        },
+    },
+    {
+        name: 'browser_get_storage',
+        description: '【免 F12 获取本地存储】提取目标网页的 localStorage 和 sessionStorage 数据，支持按 key 精确查找或全量导出。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                type: {
+                    type: 'string',
+                    enum: ['all', 'local', 'session'],
+                    description: '提取类型：默认为 "all"（同时提取 localStorage 与 sessionStorage），也可选 "local" 或 "session"',
+                },
+                keys: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: '可选：指定要提取的 key 名称数组，不传则提取全部',
+                },
+                tab_id: {
+                    type: 'number',
+                    description: '可选：指定目标标签页 ID',
+                },
+            },
+            required: [],
+        },
+    },
+    {
+        name: 'browser_evaluate',
+        description: '【免 F12 执行控制台 JS 表达式】在目标网页上下文中执行自定义只读 JavaScript 表达式并获取返回值（类似 F12 Console），可用于提取 window 全局变量或内部状态。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                expression: {
+                    type: 'string',
+                    description: '要执行的 JavaScript 表达式代码（如 "window.__INITIAL_STATE__" 或 "document.title"）',
+                },
+                tab_id: {
+                    type: 'number',
+                    description: '可选：指定目标标签页 ID',
+                },
+            },
+            required: ['expression'],
         },
     },
     // ── 2. 页面感知与信息提取 ──
@@ -477,8 +551,13 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
             const schema = properties[key];
             if (!schema)
                 throw new Error(`Unknown argument: ${key}`);
-            if (schema.type && typeof value !== schema.type)
+            if (schema.type === 'array') {
+                if (!Array.isArray(value))
+                    throw new Error(`Invalid argument type: ${key} (expected array)`);
+            }
+            else if (schema.type && typeof value !== schema.type) {
                 throw new Error(`Invalid argument type: ${key}`);
+            }
             if (schema.enum && !schema.enum.includes(value))
                 throw new Error(`Invalid argument: ${key}`);
             if (typeof value === 'number' && !Number.isFinite(value))
@@ -560,7 +639,7 @@ async function main() {
     process.once('SIGTERM', () => { bridge.close(); process.exit(0); });
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.7.0 Bookmark & File Upload) started successfully over stdio.');
+    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.8.0 Cookies & Storage & Dialogs) started successfully over stdio.');
 }
 main().catch((err) => {
     console.error('[MCP-Server] Fatal startup error:', err);

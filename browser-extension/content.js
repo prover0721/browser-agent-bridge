@@ -96,8 +96,16 @@
     }
 
     const style = window.getComputedStyle(el);
-    if (style.cursor === 'pointer' && el.childElementCount <= 3 && el.innerText.trim().length > 0) {
-      return true;
+    if (style.cursor === 'pointer') {
+      const text = (el.innerText || el.textContent || '').trim();
+      const ariaLabel = el.getAttribute('aria-label') || '';
+      const title = el.getAttribute('title') || '';
+      const cls = el.className && typeof el.className === 'string' ? el.className.toLowerCase() : '';
+      const hasActionSemantics = !!(ariaLabel || title || /btn|button|close|icon|send|action|submit|item|tab|switch/i.test(cls));
+      const hasIconChild = el.querySelector('svg, i, img') !== null;
+      if (el.childElementCount <= 4 && (text.length > 0 || hasActionSemantics || hasIconChild)) {
+        return true;
+      }
     }
 
     return false;
@@ -168,7 +176,19 @@
       '.ant-modal:not([style*="display: none"])',
       '.modal.show',
       '.modal.in',
-      '.layui-layer:not([style*="display: none"])'
+      '.layui-layer:not([style*="display: none"])',
+      '.boss-dialog:not([style*="display: none"])',
+      '.dialog-wrap:not([style*="display: none"])',
+      '.dialog-container:not([style*="display: none"])',
+      '.chat-conversation:not([style*="display: none"])',
+      '.arco-modal:not([style*="display: none"])',
+      '.arco-drawer:not([style*="display: none"])',
+      '.n-modal:not([style*="display: none"])',
+      '.n-dialog:not([style*="display: none"])',
+      '.t-dialog:not([style*="display: none"])',
+      '.ivu-modal:not([style*="display: none"])',
+      '[class*="modal-box"]:not([style*="display: none"])',
+      '[class*="dialog-box"]:not([style*="display: none"])'
     ];
     for (const sel of dialogSelectors) {
       try {
@@ -197,7 +217,7 @@
     const activeDialog = findActiveDialog();
     let dialogTitle = '';
     if (activeDialog) {
-      const titleEl = activeDialog.querySelector('.el-dialog__title, .ant-modal-title, .modal-title, [role="heading"], h1, h2, h3, header');
+      const titleEl = activeDialog.querySelector('.el-dialog__title, .ant-modal-title, .arco-modal-title, .dialog-title, .modal-title, .chat-title, .title, [role="heading"], h1, h2, h3, h4, header');
       dialogTitle = titleEl ? (titleEl.innerText || titleEl.textContent || '').trim() : '活动弹窗';
     }
 
@@ -215,16 +235,17 @@
         }
 
         const tagName = el.tagName.toLowerCase();
+        const isEditable = el.isContentEditable || el.getAttribute('contenteditable') === 'true';
         let role = el.getAttribute('role') || '';
         let type = el.getAttribute('type') || '';
-        const placeholder = (el.getAttribute('placeholder') || '').slice(0, 300);
+        const placeholder = (el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || el.getAttribute('aria-placeholder') || '').slice(0, 300);
         const autocomplete = el.getAttribute('autocomplete') || '';
         const ariaLabel = (el.getAttribute('aria-label') || '').slice(0, 300);
         const titleAttr = (el.getAttribute('title') || '').slice(0, 300);
         const name = (el.getAttribute('name') || '').slice(0, 300);
         const href = (el.getAttribute('href') || '').slice(0, 300);
         
-        let text = el.matches('input, textarea, select, [contenteditable]') ? '' : (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+        let text = el.matches('input, textarea, select') ? '' : (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
         if (text.length > 80) {
           text = text.substring(0, 80) + '...';
         }
@@ -251,7 +272,8 @@
         }
 
         // 剪枝降噪：无文本且无任何有效属性的空 a/div/span/label 节点过滤
-        const hasSemantics = !!(ariaLabel || placeholder || titleAttr || name || (href && href !== '#' && !href.startsWith('javascript:')) || isRadioOrCheckbox);
+        const hasIconOrAction = !!(el.querySelector('svg, img') || role || /btn|button|close|send|icon|action/i.test(el.className && typeof el.className === 'string' ? el.className : ''));
+        const hasSemantics = !!(ariaLabel || placeholder || titleAttr || name || (href && href !== '#' && !href.startsWith('javascript:')) || isRadioOrCheckbox || isEditable || hasIconOrAction);
         if (['a', 'div', 'span', 'i', 'p', 'label'].includes(tagName) && !text && !hasSemantics) {
           return;
         }
@@ -282,6 +304,8 @@
         if (isRadioOrCheckbox) {
           desc += controlType;
           if (isChecked) desc += ' [checked]';
+        } else if (isEditable) {
+          desc += `EDITABLE(${tagName.toUpperCase()})`;
         } else {
           desc += tagName.toUpperCase();
           if (type) desc += `(type="${type}")`;
@@ -295,6 +319,14 @@
         if (value) desc += ` (value="${value}")`;
         if (href && href !== '#' && !href.startsWith('javascript:')) {
           desc += ` (href="${href}")`;
+        }
+        if (!text && !placeholder && !value) {
+          if (el.querySelector('svg, img')) {
+            const cls = typeof el.className === 'string' ? el.className : '';
+            if (/close/i.test(cls)) desc += ' [icon:close]';
+            else if (/send/i.test(cls)) desc += ' [icon:send]';
+            else desc += ' [icon]';
+          }
         }
 
         const inDialog = activeDialog && (activeDialog.contains(el) || activeDialog === el);
@@ -419,10 +451,37 @@
       el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
       el.focus();
 
-      if (el.isContentEditable) {
-        if (clearFirst) el.innerText = '';
-        el.innerText += text;
+      if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
+        if (clearFirst) {
+          try {
+            const sel = window.getSelection();
+            if (sel) {
+              const range = document.createRange();
+              range.selectNodeContents(el);
+              sel.removeAllRanges();
+              sel.addRange(range);
+              document.execCommand('delete', false, null);
+            }
+          } catch {}
+          if (el.innerText !== undefined) el.innerText = '';
+          el.textContent = '';
+        }
+        let inserted = false;
+        try {
+          inserted = document.execCommand('insertText', false, text);
+        } catch {}
+        if (!inserted) {
+          try {
+            el.innerText = (clearFirst ? '' : (el.innerText || '')) + text;
+          } catch {}
+          if (!el.textContent || !el.textContent.includes(text)) {
+            el.textContent = (clearFirst ? '' : (el.textContent || '')) + text;
+          }
+        }
+        el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
         el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
       } else if ('value' in el) {
         if (clearFirst) {
           el.value = '';
@@ -770,6 +829,63 @@
       case 'UPLOAD_FILE': {
         const res = executeUploadFile(payload || {});
         sendResponse(res);
+        break;
+      }
+      case 'GET_STORAGE': {
+        try {
+          const type = payload?.type || 'all';
+          const keys = Array.isArray(payload?.keys) ? payload.keys : null;
+          const result = {};
+          if (type === 'all' || type === 'local') {
+            const local = {};
+            for (let i = 0; i < localStorage.length; i++) {
+              const k = localStorage.key(i);
+              if (k && (!keys || keys.includes(k))) {
+                local[k] = localStorage.getItem(k);
+              }
+            }
+            result.localStorage = local;
+          }
+          if (type === 'all' || type === 'session') {
+            const session = {};
+            for (let i = 0; i < sessionStorage.length; i++) {
+              const k = sessionStorage.key(i);
+              if (k && (!keys || keys.includes(k))) {
+                session[k] = sessionStorage.getItem(k);
+              }
+            }
+            result.sessionStorage = session;
+          }
+          sendResponse({ success: true, data: result });
+        } catch (e) {
+          sendResponse({ success: false, error: `获取存储失败: ${e.message}` });
+        }
+        break;
+      }
+      case 'EVALUATE': {
+        try {
+          const expr = payload?.expression;
+          if (typeof expr !== 'string' || !expr.trim()) {
+            sendResponse({ success: false, error: '未提供可执行的 JS 表达式' });
+            break;
+          }
+          const evalResult = window.eval(expr);
+          let serialized;
+          if (evalResult === undefined) {
+            serialized = 'undefined';
+          } else if (typeof evalResult === 'function') {
+            serialized = evalResult.toString();
+          } else {
+            try {
+              serialized = JSON.parse(JSON.stringify(evalResult));
+            } catch {
+              serialized = String(evalResult);
+            }
+          }
+          sendResponse({ success: true, data: serialized, result: serialized });
+        } catch (e) {
+          sendResponse({ success: false, error: `执行表达式错误: ${e.message}` });
+        }
         break;
       }
       default:
