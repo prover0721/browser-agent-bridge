@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-1.9.3-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-1.9.4-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -56,7 +56,8 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_bind_tab` / `browser_unbind_tab` | Pin / unpin session commands to a specific target tab |
 | `browser_switch_tab` | Switch controlled tab silently; set `focused: true` to reveal |
 | `browser_snapshot` | Extract structured DOM interactive elements with IDs and Snapshot ID (In-viewport pruning & modal prioritization) |
-| `browser_click` / `browser_type` | Click / type into target elements; supports `snapshot_id` revision matching |
+| `browser_click` | **【v1.9.4+ Recommended】Click Element (by ID/Text/Selector)**: Clicks target elements by `element_id`, button text (`text: "Edit"`), or CSS selector (`selector`), with automatic multi-level hover pre-simulation |
+| `browser_type` | Type into target elements; supports `snapshot_id` revision matching |
 | `browser_hover` | **【v1.9.3+ Recommended】Mouse Hover Action**: Hovers over elements or cards to trigger React/Vue conditional hover buttons (e.g. BOSS Zhipin "Edit", "Add", "Sync") |
 | `browser_press` / `browser_scroll` | Dispatch keyboard keys / scroll page with pixel and percentage progression |
 | `browser_navigate` | Navigate current or designated tab to a target URL |
@@ -77,6 +78,11 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_reload_extension` | **【v1.9.2+ Recommended】Auto / Hot Reload Extension**: Executes `chrome.runtime.reload()` and synchronizes active page reload, bypassing manual `chrome://extensions` visits |
 
 ## Key Architectural Advantages
+
+- **Semantic Action Revealer & Direct Text/Selector Clicking (v1.9.4 New)**:
+  - **SyntheticEvent & Native-less Action Pass-Through**: In modern React applications like BOSS Zhipin, event listeners are bound via root SyntheticEvents and buttons are styled `<span>` or `<div>` elements without static `cursor: pointer` or native `onclick`. The snapshot collector now identifies semantic action keywords ("编辑", "添加", "同步", "删除", "修改", etc.) and action classes, bypassing cursor/onclick checks to guarantee these critical actions are captured.
+  - **Snapshot Global Hover Force-Reveal CSS**: Dynamically injects an isolated high-priority stylesheet during snapshot capture to break CSS `:hover` isolation and force-reveal conditionally hidden action buttons.
+  - **Direct Text-Based & Selector-Based Clicking (`browser_click`)**: In addition to numeric `element_id`, AI agents can directly target buttons by text (`text: "编辑"` or `text: "同步至在线简历"`) or CSS selectors (`selector`), automatically traversing 4 levels of parent hover emulation before dispatching click events.
 
 - **React Floating Actions & Hover Revealer (v1.9.3 New)**:
   - **Snapshot Smart Hover Pre-Scan (`reveal_hover: true`)**: `browser_snapshot` automatically dispatches lightweight pointer/mouse hover event chains to candidate cards and list containers (`.resume-item`, `.card`, etc.), prompting React's `onMouseEnter` to mount conditionally rendered floating action buttons (such as BOSS Zhipin's "Edit", "Add", and "Sync" buttons) and labels them with `[hover]` for immediate clicking.
@@ -152,7 +158,7 @@ npm test
 npm audit
 ```
 
-Full suite of **37 automated end-to-end and unit tests** covering download tracking, network sniffing, batch form filling, navigation controls, zero-F12 cookies extraction, extension hot-reloading & tab synchronization, React conditional hover mounting & hover action revealer, rich text (Quill/WangEditor paragraph retention & word counter sync) & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
+Full suite of **38 automated end-to-end and unit tests** covering semantic action pass-through, direct text/selector clicking, download tracking, network sniffing, batch form filling, navigation controls, zero-F12 cookies extraction, extension hot-reloading & tab synchronization, React conditional hover mounting & hover action revealer, rich text (Quill/WangEditor paragraph retention & word counter sync) & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
 
 ```text
 ✔ connects without pairing and rejects webpage origins
@@ -175,7 +181,8 @@ Full suite of **37 automated end-to-end and unit tests** covering download track
 ✔ browser_reload_extension reloads extension and synchronizes active tab
 ✔ browser_hover triggers React conditional hover actions and snapshot reveals them
 ✔ hover action buttons with visibility: hidden are revealed as [hover] in snapshot
-ℹ tests 37 | pass 37 | fail 0
+✔ semantic action buttons (span/div without cursor:pointer or onclick) are captured and clickable by text
+ℹ tests 38 | pass 38 | fail 0
 ```
 
 ## License

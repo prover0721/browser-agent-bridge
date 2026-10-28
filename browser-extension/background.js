@@ -909,7 +909,13 @@ async function handleBridgeCommand(method, params) {
         break;
       case 'browser_click':
         action = 'CLICK';
-        payload = { id: params.element_id, snapshot_id: params.snapshot_id };
+        payload = {
+          id: params.element_id,
+          element_id: params.element_id,
+          text: params.text,
+          selector: params.selector,
+          snapshot_id: params.snapshot_id
+        };
         break;
       case 'browser_hover':
         action = 'HOVER';

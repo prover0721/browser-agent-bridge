@@ -18,51 +18,45 @@
    */
   function isElementVisible(el) {
     if (!el || !(el instanceof HTMLElement)) return false;
+
+    const text = (el.innerText || el.textContent || '').trim();
+    const cls = typeof el.className === 'string' ? el.className.toLowerCase() : '';
+    const isActionKeyword = /^(编辑|添加|同步|同步至在线简历|删除|修改|重命名|预览|下载|上传|保存|取消|新增|刷新|查看|提交)$/.test(text) ||
+      ((/编辑|添加|同步|删除|修改|重命名|预览|下载/.test(text)) && text.length <= 15) ||
+      /btn|button|op-|action|edit|add|sync|delete/i.test(cls);
+
     if (el.offsetParent === null && el.tagName !== 'BODY') {
       const style = window.getComputedStyle(el);
-      // 兼容 fixed/sticky 元素或在活动 dialog 容器内部的元素
+      // 兼容 fixed/sticky 元素或在活动 dialog 容器内部的元素，以及 hover 操作语义按钮
       if (style.position !== 'fixed' && style.position !== 'sticky' && !el.closest('dialog, [role="dialog"], .el-dialog, .ant-modal, .modal')) {
-        return false;
+        if (!isActionKeyword) {
+          return false;
+        }
+        el.__isHoverAction = true;
       }
     }
     const style = window.getComputedStyle(el);
-    if (style.display === 'none') {
-      return false;
+    if (style.display === 'none' || el.style.display === 'none') {
+      if (isActionKeyword) {
+        el.__isHoverAction = true;
+      } else {
+        return false;
+      }
     }
-    if (style.visibility === 'hidden') {
-      // 兼容 hover 操作按钮（如 BOSS直聘 等系统的编辑、添加、同步、删除按钮，常态 visibility: hidden，hover 父级才 visible）
-      const text = (el.innerText || el.textContent || '').trim();
-      const cls = typeof el.className === 'string' ? el.className.toLowerCase() : '';
-      const isAction = ['button', 'a'].includes(el.tagName.toLowerCase()) ||
-        el.getAttribute('role') === 'button' ||
-        /btn|button|op|action|edit|add|sync|delete/i.test(cls) ||
-        /编辑|添加|同步|删除|修改|上传|下载|查看/i.test(text);
-      const rect = el.getBoundingClientRect();
-      if (isAction && rect.width > 0 && rect.height > 0) {
+    if (style.visibility === 'hidden' || el.style.visibility === 'hidden') {
+      if (isActionKeyword) {
         el.__isHoverAction = true;
       } else {
         return false;
       }
     }
     // 特殊情况：对于 radio / checkbox，许多 UI 组件库（如 Element UI）会设置 opacity: 0，但其父 label 是可见且可交互的
-    // 另外：hover 才显示的操作按钮（如 BOSS 简历页的「编辑 / 同步至在线简历」）常态 opacity: 0，
-    // 它们占据真实布局、可点击，只是不透明度为 0。此处不再一律判为不可见，
-    // 交给下面的 getBoundingClientRect 尺寸判断，避免漏掉这类 hover 按钮。
-    if (parseFloat(style.opacity) === 0) {
+    if (parseFloat(style.opacity) === 0 || el.style.opacity === '0') {
       if ((el.tagName === 'INPUT' && (el.type === 'radio' || el.type === 'checkbox')) || el.matches?.('input[type="radio"], input[type="checkbox"]')) {
         const parentLabel = el.closest('label');
         if (parentLabel && isElementVisible(parentLabel)) {
           return true;
         }
-      }
-      const oRect = el.getBoundingClientRect();
-      if (oRect.width <= 0 || oRect.height <= 0) {
-        return false;
-      }
-      // 仍然过滤掉祖先整体隐藏（display:none / visibility:hidden）的情况
-      const oStyle = window.getComputedStyle(el);
-      if (oStyle.display === 'none' || (oStyle.visibility === 'hidden' && !el.__isHoverAction)) {
-        return false;
       }
       el.__isHoverAction = true;
     }
@@ -74,6 +68,10 @@
           const lRect = parentLabel.getBoundingClientRect();
           if (lRect.width > 0 && lRect.height > 0) return true;
         }
+      }
+      if (isActionKeyword) {
+        el.__isHoverAction = true;
+        return true;
       }
       return false;
     }
@@ -89,6 +87,18 @@
     const tagName = el.tagName.toLowerCase();
     if (['a', 'button', 'input', 'select', 'textarea', 'option'].includes(tagName)) {
       return true;
+    }
+
+    // 核心加固：高频操作语义直接放行（无视 cursor: pointer、tagName 或 React 委托机制）
+    const text = (el.innerText || el.textContent || '').trim();
+    const cls = typeof el.className === 'string' ? el.className.toLowerCase() : '';
+    const isActionWord = /^(编辑|添加|同步|同步至在线简历|删除|修改|重命名|预览|下载|上传|保存|取消|新增|刷新|查看|提交)$/.test(text) ||
+      ((/编辑|添加|同步|删除|修改|重命名|预览|下载/.test(text)) && text.length <= 15);
+    const isActionClass = /btn|button|op-|action|edit|add|sync|delete|del|submit/i.test(cls) && text.length > 0 && text.length <= 25;
+    if (isActionWord || isActionClass) {
+      if (el.childElementCount <= 4) {
+        return true;
+      }
     }
 
     if (tagName === 'label') {
@@ -247,6 +257,29 @@
       const titleEl = activeDialog.querySelector('.el-dialog__title, .ant-modal-title, .arco-modal-title, .dialog-title, .modal-title, .chat-title, .title, [role="heading"], h1, h2, h3, h4, header');
       dialogTitle = titleEl ? (titleEl.innerText || titleEl.textContent || '').trim() : '活动弹窗';
     }
+
+    // 注入页面级全局 Hover 强显规则，穿透 CSS :hover 样式隔离
+    try {
+      const styleId = '__browser_agent_hover_style__';
+      let styleTag = document.getElementById(styleId);
+      if (!styleTag) {
+        styleTag = document.createElement('style');
+        styleTag.id = styleId;
+        styleTag.textContent = `
+          .resume-item .op, .resume-item .btn-edit, .resume-item .btn-add, .resume-item .op-box,
+          .annex-item .op-box, .annex-item .btn-sync, [class*="hover-"], [class*="btn-edit"],
+          [class*="btn-add"], [class*="btn-sync"], [class*="btn-del"], [class*="op-btn"],
+          [class*="op-wrap"], [class*="action-wrap"], [class*="btn-list"],
+          .history-item .op, .project-item .op {
+            display: inline-block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+          }
+        `;
+        (document.head || document.documentElement).appendChild(styleTag);
+      }
+    } catch {}
 
     // 智能悬停扫描：针对卡片/列表容器自动派发轻量 hover 唤醒，
     // 让 React 的 onMouseEnter 自动挂载条件浮层按钮（如 BOSS直聘 .resume-item 的「编辑/添加/同步」）
@@ -441,14 +474,54 @@
     return el;
   }
 
-  function executeClick(id, expectedSnapshot) {
-    const el = elementMap.get(Number(id));
-    if (!el) {
-      return { success: false, error: `未找到 ID 为 [${id}] 的元素，请先调用 browser_snapshot 获取最新元素列表。` };
+  function executeClick(payload, expectedSnapshot) {
+    let el = null;
+    let id = typeof payload === 'object' ? (payload?.id ?? payload?.element_id) : payload;
+    let selector = typeof payload === 'object' ? payload?.selector : null;
+    let text = typeof payload === 'object' ? payload?.text : null;
+    let expSnap = typeof payload === 'object' ? (payload?.snapshot_id || expectedSnapshot) : expectedSnapshot;
+
+    if (id !== undefined && id !== null) {
+      el = elementMap.get(Number(id));
+      if (!el) {
+        return { success: false, error: `未找到 ID 为 [${id}] 的元素，请先调用 browser_snapshot 获取最新元素列表。` };
+      }
+      try {
+        resolveElement(id, expSnap);
+      } catch (e) {
+        return { success: false, error: e.message };
+      }
+    } else if (selector) {
+      el = document.querySelector(selector);
+      if (!el) {
+        return { success: false, error: `未通过选择器 "${selector}" 找到可点击元素` };
+      }
+    } else if (text) {
+      // 通过包含文本模糊查找匹配的最小元素节点（优先完全匹配）
+      const all = document.querySelectorAll('*');
+      let exactMatch = null;
+      let partialMatch = null;
+      const targetText = String(text).trim();
+      for (const node of all) {
+        const nodeText = (node.innerText || node.textContent || '').trim();
+        if (nodeText === targetText && node.childElementCount <= 2) {
+          exactMatch = node;
+          break;
+        } else if (nodeText.includes(targetText) && node.childElementCount <= 4) {
+          if (!partialMatch || nodeText.length < (partialMatch.innerText || '').length) {
+            partialMatch = node;
+          }
+        }
+      }
+      el = exactMatch || partialMatch;
+      if (!el) {
+        return { success: false, error: `未在页面中找到文本包含 "${text}" 的可点击元素` };
+      }
+    } else {
+      return { success: false, error: '请提供 element_id、selector 或 text 参数' };
     }
 
     try {
-      resolveElement(id, expectedSnapshot);
       el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
       el.focus();
 
@@ -492,9 +565,10 @@
       el.dispatchEvent(new MouseEvent('mouseup', eventOpts));
       el.dispatchEvent(new MouseEvent('click', eventOpts));
 
-      return { success: true, message: `已成功点击元素 [${id}] (${el.tagName})` };
+      const label = (el.innerText || el.textContent || '').trim().slice(0, 30);
+      return { success: true, message: `已成功点击元素 ${el.tagName} [${label ? `"${label}"` : (id || selector)}]` };
     } catch (err) {
-      return { success: false, error: `点击元素 [${id}] 失败: ${err.message}` };
+      return { success: false, error: `点击元素失败: ${err.message}` };
     }
   }
 
@@ -1075,7 +1149,7 @@
         break;
       }
       case 'CLICK': {
-        const res = executeClick(payload.id, payload.snapshot_id);
+        const res = executeClick(payload, payload?.snapshot_id);
         sendResponse(res);
         break;
       }

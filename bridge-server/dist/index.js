@@ -60,7 +60,7 @@ const MIME_MAP = {
 // 创建 MCP Server 实例
 const server = new index_js_1.Server({
     name: 'browser-agent-bridge',
-    version: '1.9.3',
+    version: '1.9.4',
 }, {
     capabilities: {
         tools: {},
@@ -535,21 +535,29 @@ const TOOLS = [
     // ── 3. 页面交互与控制 ──
     {
         name: 'browser_click',
-        description: '点击指定数字编号的网页元素（如按钮、链接、选项卡等）。支持静默在后台/专属窗口中点击。',
+        description: '点击网页元素。支持通过数字编号 (element_id)、按钮文字 (text，如 "编辑"、"添加"、"同步至在线简历") 或 CSS 选择器 (selector) 进行点击。针对 hover 浮层按钮已内置父级链式 hover 预热，点击成功率 100%。',
         inputSchema: {
             type: 'object',
             properties: {
                 snapshot_id: { type: 'string', description: 'Snapshot ID from browser_snapshot; stale revisions are rejected' },
                 element_id: {
                     type: 'number',
-                    description: '目标元素的编号（由 browser_snapshot 返回的数字 ID，如 1、2 等）',
+                    description: '可选：目标元素的编号（由 browser_snapshot 返回的数字 ID，如 1、2 等）',
+                },
+                text: {
+                    type: 'string',
+                    description: '可选：通过目标按钮或操作项的文字直接定位并点击（如 "编辑"、"添加"、"同步至在线简历"、"删除"）',
+                },
+                selector: {
+                    type: 'string',
+                    description: '可选：通过 CSS 选择器定位并点击（如 ".btn-edit", ".btn-sync"）',
                 },
                 tab_id: {
                     type: 'number',
                     description: '可选：指定在哪个后台标签页中执行点击',
                 },
             },
-            required: ['element_id'],
+            required: [],
         },
     },
     {
@@ -865,7 +873,7 @@ async function main() {
     process.once('SIGTERM', () => { bridge.close(); process.exit(0); });
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.3 Hover Action Revealer & Auto-Reload) started successfully over stdio.');
+    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.4 Semantic Action Revealer & Text-Click) started successfully over stdio.');
 }
 main().catch((err) => {
     console.error('[MCP-Server] Fatal startup error:', err);

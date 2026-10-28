@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-1.9.3-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-1.9.4-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -56,7 +56,8 @@
 | `browser_bind_tab` / `browser_unbind_tab` | 绑定 / 解除当前会话的目标标签页 |
 | `browser_switch_tab` | 静默切换受控页面；`focused: true` 才显示到前台 |
 | `browser_snapshot` | 获取交互元素编号和 Snapshot ID（默认视口优先智能瘦身，支持活动弹窗置顶） |
-| `browser_click` / `browser_type` | 点击 / 填写指定元素；支持自定义 Label/Radio 联动与表单响应；可传 `snapshot_id` 校验版本 |
+| `browser_click` | **【v1.9.4+ 推荐】点击元素（支持编号/文字/选择器）**：支持通过 `element_id`、按钮文本（`text: "编辑"`）或选择器（`selector`）点击；内置前置 hover 链 |
+| `browser_type` | 填写指定元素；支持自定义 Label/Radio 联动与表单响应；可传 `snapshot_id` 校验版本 |
 | `browser_hover` | **【v1.9.3+ 推荐】鼠标悬停/Hover**：精准悬停在卡片或元素上，唤醒 React/Vue 条件浮层按钮（如 BOSS直聘简历的「编辑」「添加」「同步」按钮） |
 | `browser_press` / `browser_scroll` | 派发键盘事件 / 滚动页面（附带滚动位置与进度百分比指示） |
 | `browser_navigate` | 在指定或已绑定页面导航（后台自主导航零打扰） |
@@ -76,6 +77,10 @@
 | `browser_go_back` / `browser_go_forward` / `browser_reload` | **【v1.9+ 推荐】基础导航控制**：控制当前受控标签页后退、前进或硬刷新 |
 | `browser_reload_extension` | **【v1.9.2+ 推荐】一键/自动热重载扩展**：执行 `chrome.runtime.reload()` 秒级重载扩展并同步刷新受控网页，免去手动前往 `chrome://extensions` 页面刷新的繁琐步骤 |
 
+- **语义动作穿透与多模态点击 (v1.9.4 新增)**：
+  - **React 合成事件与无原生属性动作穿透**：针对 BOSS直聘等现代 React 应用采用顶层合成事件代理（SyntheticEvent），且操作按钮为普通 `<span>`/`<div>`（静态无 `cursor: pointer` 且 `el.onclick === null`），快照收集器通过语义动作关键词（如“编辑”、“添加”、“同步”、“删除”、“修改”等）与常见 class 模式直接穿透判定为交互元素，不再因缺少原生点击属性被误过滤。
+  - **快照动态 CSS 浮层样式强制注入**：在快照提取期间向页面注入隔离样式表，强制展现常态下被 CSS `:hover` 伪类隐藏的卡片操作层与按钮，突破 CSS hover 隔离。
+  - **基于文字与选择器的直达点击 (`browser_click`)**：除通过快照编号 `element_id` 点击外，新增支持直接指定按钮文字（`text: "编辑"` / `text: "同步至在线简历"`）或 CSS 选择器（`selector`）触发点击，并在触发前自动沿 DOM 树向上回溯派发 4 级父容器 hover 模拟，告别因快照失效或编号缺失导致的点击失败。
 - **React 悬浮浮层与 Hover 按钮智能透出 (v1.9.3 新增)**：
   - **快照智能扫描唤醒 (`reveal_hover: true`)**：`browser_snapshot` 在收集元素前自动向卡片/列表容器（`.resume-item`, `.card` 等）微秒级派发指针与鼠标 hover 链，促使 React 的 `onMouseEnter` 自动挂载浮层按钮（如 BOSS直聘在线简历页的「编辑」「添加」「同步」按钮），并在快照中标记为 `[hover]` 供 AI 直接点击。
   - **显式悬停交互工具 (`browser_hover`)**：支持通过 `element_id`、`selector` 或包含的 `text`（如 "工作经历"）将鼠标悬停在指定区块，触发展开下拉菜单或浮层交互。
@@ -123,6 +128,6 @@ npm test
 npm audit
 ```
 
-全套 37 项测试覆盖本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 38 项测试覆盖语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。

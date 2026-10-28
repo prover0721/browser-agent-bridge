@@ -601,3 +601,29 @@ test('hover action buttons with visibility: hidden are revealed as [hover] in sn
   const snapRes = page.call('SNAPSHOT').data;
   assert.match(snapRes, /BUTTON.*\[hover\].*"同步至在线简历"/);
 });
+
+test('semantic action buttons (span/div without cursor:pointer or onclick) are captured and clickable by text', () => {
+  const html = `
+    <div class="resume-item" id="section-adv">
+      <div class="item-title">个人优势</div>
+      <div class="op-box">
+        <span class="op-btn">编辑</span>
+        <span class="op-btn">添加</span>
+      </div>
+    </div>
+  `;
+  const page = content(html);
+  const editSpan = page.window.document.querySelector('.op-btn');
+  let clicked = false;
+  editSpan.addEventListener('click', () => { clicked = true; });
+
+  // 1. 快照应当成功提取出 SPAN 形式的「编辑」与「添加」操作项
+  const snapshot = page.call('SNAPSHOT').data;
+  assert.match(snapshot, /SPAN.*"编辑"/);
+  assert.match(snapshot, /SPAN.*"添加"/);
+
+  // 2. 支持直接通过 text: "编辑" 触发点击
+  const clickRes = page.call('CLICK', { text: '编辑' });
+  assert.equal(clickRes.success, true);
+  assert.equal(clicked, true);
+});
