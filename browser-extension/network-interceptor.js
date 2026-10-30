@@ -38,6 +38,45 @@
     });
   } catch {}
 
+  // 0.1 后台前台化伪装与生命周期保活（解除 Chromium 后台 rAF 停摆与定时器降频）
+  try {
+    Object.defineProperty(document, 'visibilityState', {
+      get: () => 'visible',
+      configurable: true
+    });
+    Object.defineProperty(document, 'hidden', {
+      get: () => false,
+      configurable: true
+    });
+    document.hasFocus = function () {
+      return true;
+    };
+    window.addEventListener('visibilitychange', (e) => {
+      if (document.visibilityState === 'hidden') {
+        e.stopImmediatePropagation();
+      }
+    }, true);
+
+    // 建立后台轻量无声 AudioContext 保活（彻底破除 Chromium 内核级 0 FPS 冻结与 Timer Alignment 降频）
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (AudioCtx) {
+      let silentCtx = null;
+      window.addEventListener('DOMContentLoaded', () => {
+        try {
+          if (!silentCtx) {
+            silentCtx = new AudioCtx();
+            const osc = silentCtx.createOscillator();
+            const gain = silentCtx.createGain();
+            gain.gain.value = 0.00001; // 近乎无声
+            osc.connect(gain);
+            gain.connect(silentCtx.destination);
+            osc.start();
+          }
+        } catch {}
+      }, { once: true });
+    }
+  } catch {}
+
   // 1. Hook window.fetch
   if (typeof window.fetch === 'function') {
     const originalFetch = window.fetch;

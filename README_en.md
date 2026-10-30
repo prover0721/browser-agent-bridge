@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-1.9.4-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-1.9.5-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -55,7 +55,7 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_create_tab` / `browser_close_tab` | Create / close a browser tab |
 | `browser_bind_tab` / `browser_unbind_tab` | Pin / unpin session commands to a specific target tab |
 | `browser_switch_tab` | Switch controlled tab silently; set `focused: true` to reveal |
-| `browser_snapshot` | Extract structured DOM interactive elements with IDs and Snapshot ID (In-viewport pruning & modal prioritization) |
+| `browser_snapshot` | Extract structured DOM interactive elements with IDs and Snapshot ID (In-viewport pruning, modal prioritization & `ignore_dialog: true` bypass) |
 | `browser_click` | **【v1.9.4+ Recommended】Click Element (by ID/Text/Selector)**: Clicks target elements by `element_id`, button text (`text: "Edit"`), or CSS selector (`selector`), with automatic multi-level hover pre-simulation |
 | `browser_type` | Type into target elements; supports `snapshot_id` revision matching |
 | `browser_hover` | **【v1.9.3+ Recommended】Mouse Hover Action**: Hovers over elements or cards to trigger React/Vue conditional hover buttons (e.g. BOSS Zhipin "Edit", "Add", "Sync") |
@@ -78,6 +78,11 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_reload_extension` | **【v1.9.2+ Recommended】Auto / Hot Reload Extension**: Executes `chrome.runtime.reload()` and synchronizes active page reload, bypassing manual `chrome://extensions` visits |
 
 ## Key Architectural Advantages
+
+- **Background Visibility Spoofing & Anti-Ghost Dialog (v1.9.5 New)**:
+  - **Main-World Page Visibility Spoofing & Timer Keep-Alive**: Overrides `document.visibilityState` to `'visible'`, `document.hidden` to `false`, and `document.hasFocus()` to return `true`, paired with in-background silent AudioContext keep-alive. Neutralizes Chromium's background 0 FPS freezing and timer alignment throttling, eliminating unnamed/stuck SPA hydration and persistent skeleton loading masks.
+  - **Anti-Ghost Dialog Filter & `ignore_dialog` Direct Bypass**: Prunes false-positive layout containers (like `.chat-conversation`); discards zero-dimension and empty skeleton dialogs; replaces disruptive "Restricted Mask" labeling with normal content blocks, and introduces `ignore_dialog: true` to bypass any popup overlays unconditionally.
+  - **Desktop Viewport Normalization (1440x900) & Tab Auto-Muting**: Automatically standardizes AI background workspace windows to a 1440x900 desktop resolution, avoiding small-window responsive hamburger menu collapses, and silences all background AI tabs (`muted: true`) to prevent unsolicited audio playback.
 
 - **Semantic Action Revealer & Direct Text/Selector Clicking (v1.9.4 New)**:
   - **SyntheticEvent & Native-less Action Pass-Through**: In modern React applications like BOSS Zhipin, event listeners are bound via root SyntheticEvents and buttons are styled `<span>` or `<div>` elements without static `cursor: pointer` or native `onclick`. The snapshot collector now identifies semantic action keywords ("编辑", "添加", "同步", "删除", "修改", etc.) and action classes, bypassing cursor/onclick checks to guarantee these critical actions are captured.
@@ -158,7 +163,7 @@ npm test
 npm audit
 ```
 
-Full suite of **38 automated end-to-end and unit tests** covering semantic action pass-through, direct text/selector clicking, download tracking, network sniffing, batch form filling, navigation controls, zero-F12 cookies extraction, extension hot-reloading & tab synchronization, React conditional hover mounting & hover action revealer, rich text (Quill/WangEditor paragraph retention & word counter sync) & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
+Full suite of **42 automated end-to-end and unit tests** covering background visibility spoofing, audio keep-alive, anti-ghost dialog filtering, ignore_dialog modal bypass, 1440x900 desktop viewport normalization, tab auto-muting, semantic action pass-through, direct text/selector clicking, download tracking, network sniffing, batch form filling, navigation controls, zero-F12 cookies extraction, extension hot-reloading & tab synchronization, React conditional hover mounting & hover action revealer, rich text (Quill/WangEditor paragraph retention & word counter sync) & complex dialogs, bookmark search & navigation, file injection, Shadow DOM traversal, modal grouping, conditional waiting, session isolation, background windows, and snapshot invalidation.
 
 ```text
 ✔ connects without pairing and rejects webpage origins
@@ -182,7 +187,11 @@ Full suite of **38 automated end-to-end and unit tests** covering semantic actio
 ✔ browser_hover triggers React conditional hover actions and snapshot reveals them
 ✔ hover action buttons with visibility: hidden are revealed as [hover] in snapshot
 ✔ semantic action buttons (span/div without cursor:pointer or onclick) are captured and clickable by text
-ℹ tests 38 | pass 38 | fail 0
+✔ browser_snapshot with ignore_dialog: true bypasses dialog isolation
+✔ empty dialog container without interactive elements is ignored as ghost modal
+✔ network-interceptor spoofs visibilityState and hasFocus
+✔ ensureAiWindow specifies 1440x900 desktop dimensions and mutes background tabs
+ℹ tests 42 | pass 42 | fail 0
 ```
 
 ## License

@@ -131,20 +131,40 @@ function connectBridge(force = false) {
 async function waitForTabReady(tabId, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const finish = (error, tab) => {
+    const finish = async (error, tab) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       chrome.tabs.onUpdated.removeListener(onUpdated);
       chrome.tabs.onRemoved.removeListener(onRemoved);
-      if (error) reject(error); else resolve(tab);
+      if (error) {
+        reject(error);
+        return;
+      }
+      // SPA 标题与水合就绪探针：等待 SPA 路由解析与真实标题挂载（最多等待 600ms）
+      try {
+        let currentTab = tab || (await chrome.tabs.get(tabId).catch(() => null));
+        if (currentTab && (!currentTab.title || /^(未命名|about:blank|untitled)$/i.test(currentTab.title.trim()))) {
+          const start = Date.now();
+          while (Date.now() - start < 600) {
+            await new Promise(r => setTimeout(r, 100));
+            currentTab = await chrome.tabs.get(tabId).catch(() => null);
+            if (currentTab && currentTab.title && !/^(未命名|about:blank|untitled)$/i.test(currentTab.title.trim())) {
+              break;
+            }
+          }
+        }
+        resolve(currentTab || tab);
+      } catch {
+        resolve(tab);
+      }
     };
     const onUpdated = (id, change, tab) => { if (id === tabId && change.status === 'complete') finish(null, tab); };
     const onRemoved = id => { if (id === tabId) finish(new Error('等待期间标签页已关闭')); };
     const timer = setTimeout(() => finish(new Error('页面加载超时，请检查页面后重试')), timeoutMs);
     chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.onRemoved.addListener(onRemoved);
-    chrome.tabs.get(tabId).then(tab => { if (tab.status === 'complete') finish(null, tab); }, error => finish(error));
+    chrome.tabs.get(tabId).then(tab => { if (tab && tab.status === 'complete') finish(null, tab); }, error => finish(error));
   });
 }
 
@@ -168,11 +188,20 @@ async function ensureAiWindow(url, makeActive = false, reuseTab = false) {
       await chrome.tabs.update(tab.id, { active: true });
       await chrome.windows.update(win.id, { focused: true });
     }
+    try { if (tab?.id) await chrome.tabs.update(tab.id, { muted: true }); } catch {}
     return { tab, isNewWindow: false, windowId: win.id };
   }
-  const created = await chrome.windows.create({ url: url || 'https://www.bing.com', focused: false, state: 'normal' });
+  // 规范 AI 独立工作窗口为标准桌面尺寸 1440x900，杜绝移动端折叠或抽屉遮罩
+  const created = await chrome.windows.create({
+    url: url || 'https://www.bing.com',
+    focused: false,
+    state: 'normal',
+    width: 1440,
+    height: 900
+  });
   aiWindowId = created.id;
   const tab = created.tabs?.[0] || (await chrome.tabs.query({ windowId: created.id }))[0];
+  try { if (tab?.id) await chrome.tabs.update(tab.id, { muted: true }); } catch {}
   return { tab, isNewWindow: true, windowId: created.id };
 }
 
@@ -860,7 +889,7 @@ async function handleBridgeCommand(method, params) {
   }
 
   // ── 2. 页面级信息与跳转命令 ──
-  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_hover', 'browser_press', 'browser_scroll', 'browser_upload_file', 'browser_fill_form'];
+  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_hover', 'browser_press', 'browser_scroll', 'browser_upload_file', 'browser_fill_form', 'browser_insert_text'];
   if (mutations.includes(method) && !params.tab_id && !boundTabId) return { error: '修改页面前请指定 tab_id 或绑定标签页' };
   const targetTab = await resolveTargetTab(params.tab_id);
   if (!targetTab || !targetTab.id) {
@@ -904,7 +933,8 @@ async function handleBridgeCommand(method, params) {
         payload = {
           viewport_only: params.viewport_only !== false,
           max_elements: params.max_elements || 50,
-          reveal_hover: params.reveal_hover !== false
+          reveal_hover: params.reveal_hover !== false,
+          ignore_dialog: params.ignore_dialog === true
         };
         break;
       case 'browser_click':
@@ -939,6 +969,14 @@ async function handleBridgeCommand(method, params) {
       case 'browser_press':
         action = 'PRESS';
         payload = { key: params.key };
+        break;
+      case 'browser_insert_text':
+        action = 'INSERT_TEXT';
+        payload = {
+          id: params.element_id,
+          snapshot_id: params.snapshot_id,
+          text: params.text
+        };
         break;
       case 'browser_scroll':
         action = 'SCROLL';

@@ -203,7 +203,10 @@
   /**
    * 查找当前页面可见的活动弹窗 (Dialog / Modal)
    */
-  function findActiveDialog() {
+  function findActiveDialog(options = {}) {
+    if (options.ignore_dialog === true) {
+      return null;
+    }
     const dialogSelectors = [
       'dialog[open]',
       '[role="dialog"]:not([aria-hidden="true"])',
@@ -217,7 +220,6 @@
       '.boss-dialog:not([style*="display: none"])',
       '.dialog-wrap:not([style*="display: none"])',
       '.dialog-container:not([style*="display: none"])',
-      '.chat-conversation:not([style*="display: none"])',
       '.arco-modal:not([style*="display: none"])',
       '.arco-drawer:not([style*="display: none"])',
       '.n-modal:not([style*="display: none"])',
@@ -232,9 +234,25 @@
         const list = document.querySelectorAll(sel);
         for (let i = list.length - 1; i >= 0; i--) {
           const d = list[i];
-          if (isElementVisible(d)) {
-            return d;
+          if (!isElementVisible(d)) continue;
+
+          // 1. 深度排除 0 尺寸或极小的伪容器/骨架标桩（必须有实体渲染面积）
+          const rect = d.getBoundingClientRect();
+          if (rect.width < 10 || rect.height < 10) continue;
+
+          // 2. 检查父级 wrapper 是否隐藏（针对 Element UI / Ant Design 等包裹层）
+          const parentWrapper = d.closest('.el-dialog__wrapper, .ant-modal-root, .ant-modal-wrap');
+          if (parentWrapper) {
+            const pStyle = window.getComputedStyle(parentWrapper);
+            if (pStyle.display === 'none' || pStyle.visibility === 'hidden') continue;
           }
+
+          // 3. 必须包含至少一个真实的交互元素或有效文本，排除空容器与纯加载骨架
+          const hasInteractive = !!d.querySelector('button, input, select, textarea, a[href], [role="button"], .btn, .close, [class*="btn"]');
+          const hasText = (d.innerText || d.textContent || '').trim().length > 0;
+          if (!hasInteractive && !hasText) continue;
+
+          return d;
         }
       } catch {}
     }
@@ -249,13 +267,16 @@
     snapshotId = crypto.randomUUID();
 
     const viewportOnly = options.viewport_only !== false; // 默认开启视口过滤
-    const maxElements = Math.min(500, Math.max(1, Number(options.max_elements) || 50));
+    const maxElements = Math.min(3000, Math.max(1, Number(options.max_elements) || 50));
 
-    const activeDialog = findActiveDialog();
+    const activeDialog = findActiveDialog(options);
     let dialogTitle = '';
     if (activeDialog) {
       const titleEl = activeDialog.querySelector('.el-dialog__title, .ant-modal-title, .arco-modal-title, .dialog-title, .modal-title, .chat-title, .title, [role="heading"], h1, h2, h3, h4, header');
-      dialogTitle = titleEl ? (titleEl.innerText || titleEl.textContent || '').trim() : '活动弹窗';
+      dialogTitle = titleEl ? (titleEl.innerText || titleEl.textContent || '').trim() : '';
+      if (!dialogTitle) {
+        dialogTitle = activeDialog.getAttribute('aria-label') || activeDialog.getAttribute('data-title') || '活动弹窗';
+      }
     }
 
     // 注入页面级全局 Hover 强显规则，穿透 CSS :hover 样式隔离
@@ -439,9 +460,11 @@
 
     let contentOutput = '';
 
-    if (activeDialog && dialogList.length > 0) {
+    if (activeDialog && dialogList.length > 0 && !options.ignore_dialog) {
       contentOutput += `=== 【当前活动弹窗: ${dialogTitle}】 ===\n` + dialogList.join('\n') + '\n\n';
-      contentOutput += `=== 【底层遮罩页面 (操作受限)】 ===\n`;
+      if (inViewportList.length > 0) {
+        contentOutput += `=== 【页面主要内容区】 ===\n`;
+      }
     }
 
     if (viewportOnly) {
@@ -794,12 +817,52 @@
   }
 
   /**
+   * 用 execCommand('insertText') 模拟真实键入，触发浏览器原生 input 事件链。
+   * 用于 Element-UI / Ant Design 等只认真实输入的受控组件（日期选择器、金额掩码等）。
+   */
+  function executeInsertText(id, text, expectedSnapshot) {
+    const el = elementMap.get(Number(id));
+    if (!el) return { success: false, error: `未找到 ID 为 [${id}] 的元素` };
+    try {
+      resolveElement(id, expectedSnapshot);
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      el.focus();
+      try {
+        const sel = window.getSelection();
+        if (sel) {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      } catch {}
+      if ('value' in el) {
+        try { el.setSelectionRange(0, (el.value || '').length); } catch {}
+      }
+      let ok = false;
+      try { ok = document.execCommand('insertText', false, String(text)); } catch {}
+      if (!ok) {
+        // 兜底：select-all + delete，再逐字符 insertText
+        try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch {}
+        for (const ch of String(text)) {
+          try { document.execCommand('insertText', false, ch); } catch {}
+        }
+      }
+      return { success: true, message: `已用原生输入写入元素 [${id}]，当前 value=${'value' in el ? JSON.stringify(el.value) : 'n/a'}` };
+    } catch (err) {
+      return { success: false, error: `原生输入失败: ${err.message}` };
+    }
+  }
+
+  /**
    * 执行键盘按键
    */
   function executePress(key) {
     try {
       const activeEl = document.activeElement || document.body;
-      const opts = { key, code: key, bubbles: true, cancelable: true, view: window };
+      const KEYCODES = { Enter: 13, Tab: 9, Escape: 27, Esc: 27, ArrowDown: 40, ArrowUp: 38, ArrowLeft: 37, ArrowRight: 39, Space: 32, ' ': 32, Backspace: 8, Delete: 46 };
+      const kc = KEYCODES[key] || (key && key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0);
+      const opts = { key, code: key, keyCode: kc, which: kc, charCode: kc, bubbles: true, cancelable: true, view: window };
       
       activeEl.dispatchEvent(new KeyboardEvent('keydown', opts));
       activeEl.dispatchEvent(new KeyboardEvent('keypress', opts));
@@ -975,10 +1038,20 @@
       }
 
       const DTConstructor = typeof DataTransfer !== 'undefined' ? DataTransfer : (typeof window !== 'undefined' && window.DataTransfer ? window.DataTransfer : null);
-      const dt = DTConstructor ? new DTConstructor() : { items: { add: () => {} }, files: [file] };
-      if (dt.items && typeof dt.items.add === 'function') {
-        try { dt.items.add(file); } catch {}
+      let dtErr = '';
+      let dt = DTConstructor ? new DTConstructor() : null;
+      if (dt && dt.items && typeof dt.items.add === 'function') {
+        try { dt.items.add(file); } catch (e) { dtErr = 'itemsAdd:' + e.message; }
+      } else { dtErr = 'noItems'; }
+      if (!dt || !dt.files || dt.files.length === 0) {
+        // 退路：用 ClipboardEvent 构造 DataTransfer（部分页面环境 items.add 受限）
+        try {
+          const cd = new ClipboardEvent('').clipboardData;
+          if (cd && cd.items && cd.items.add) { cd.items.add(file); }
+          if (cd && cd.files && cd.files.length) { dt = cd; dtErr += '|clipboard-ok'; }
+        } catch (e) { dtErr += '|clip:' + e.message; }
       }
+      if (!dt) { dt = { items: { add: () => {} }, files: [file] }; }
 
       // 3. 定位目标 input[type="file"]
       let targetInput = null;
@@ -992,8 +1065,14 @@
             targetInput = el;
           } else {
             // 在指定元素内部、父级容器内部或相邻区域智能查找 input[type="file"]
-            targetInput = el.querySelector('input[type="file"]') ||
-                          el.closest('.el-upload, .upload, .ant-upload, form, div')?.querySelector('input[type="file"]');
+            const local = Array.from(el.querySelectorAll('input[type="file"]'));
+            const near = el.closest('.el-upload, .upload, .ant-upload, form')?.querySelectorAll('input[type="file"]') || [];
+            const pool = local.concat(Array.from(near));
+            const okPdf = (inp) => {
+              const a = (inp.getAttribute('accept') || '').toLowerCase();
+              return !a || a.includes('pdf') || a.includes('*') || a.includes('doc') || a.includes('application');
+            };
+            targetInput = pool.find(okPdf) || pool[0] || null;
           }
         }
       }
@@ -1005,8 +1084,27 @@
           targetInput = activeDialog.querySelector('input[type="file"]');
         }
       }
+      // 优先选择 accept 允许 PDF/未限制的 input（页面里常有头像等图片专用 input）
       if (!targetInput) {
-        targetInput = document.querySelector('input[type="file"]');
+        const cands = Array.from(document.querySelectorAll('input[type="file"]'));
+        const pdfOk = (inp) => {
+          const a = (inp.getAttribute('accept') || '').toLowerCase();
+          if (!a) return true;
+          return a.includes('pdf') || a.includes('*') || a.includes('doc') || a.includes('application');
+        };
+        targetInput = cands.find(pdfOk) || cands[0] || null;
+      } else {
+        // 已按 id 定位到容器，但容器内的 input 可能只收图片（如头像上传），此时改选全页第一个收 PDF 的 input
+        const curAccept = (targetInput.getAttribute('accept') || '').toLowerCase();
+        const curOk = !curAccept || curAccept.includes('pdf') || curAccept.includes('*') || curAccept.includes('doc') || curAccept.includes('application');
+        if (!curOk) {
+          const cands = Array.from(document.querySelectorAll('input[type="file"]'));
+          const better = cands.find((inp) => {
+            const a = (inp.getAttribute('accept') || '').toLowerCase();
+            return !a || a.includes('pdf') || a.includes('*') || a.includes('doc') || a.includes('application');
+          });
+          if (better) targetInput = better;
+        }
       }
 
       if (!targetInput) {
@@ -1021,16 +1119,26 @@
       }
 
       // 4. 将文件赋予 input.files 并触发标准事件
+      let assignErr = '';
+      // 某些环境 DataTransfer.items.add 成功但 files 仍为空，构造 FileList 替身
+      let filesObj = (dt.files && dt.files.length) ? dt.files : null;
+      if (!filesObj) {
+        try {
+          filesObj = { 0: file, length: 1, item: (i) => (i === 0 ? file : null), [Symbol.iterator]: function* () { yield file; } };
+        } catch { filesObj = [file]; }
+      }
       try {
-        targetInput.files = dt.files;
-      } catch {
+        targetInput.files = filesObj;
+        if (!targetInput.files || !targetInput.files.length) throw new Error('assign-empty');
+      } catch (e1) {
+        assignErr = 'set:' + e1.message;
         try {
           Object.defineProperty(targetInput, 'files', {
-            value: dt.files,
+            value: filesObj,
             writable: true,
             configurable: true
           });
-        } catch {}
+        } catch (e2) { assignErr += '|def:' + e2.message; }
       }
       targetInput.dispatchEvent(new Event('input', { bubbles: true }));
       targetInput.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1049,7 +1157,36 @@
         }
       }
 
-      return { success: true, message: `已成功注入文件 [${filename}] (${(len / 1024).toFixed(1)} KB) 并触发上传响应` };
+      // 4b. 同时对目标容器派发拖拽事件（很多上传区只监听 drop）
+      if (targetContainer && targetContainer.dispatchEvent) {
+        try {
+          for (const t of ['dragenter', 'dragover', 'drop']) {
+            targetContainer.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt }));
+          }
+        } catch {}
+      }
+
+      // 4c. 兜底：对页面所有 input[type=file] 都注入并派发 change（有些站点用多个隐藏 input）
+      try {
+        const allInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+        for (const inp of allInputs) {
+          if (inp === targetInput) continue;
+          try {
+            inp.files = dt.files;
+            inp.dispatchEvent(new Event('input', { bubbles: true }));
+            inp.dispatchEvent(new Event('change', { bubbles: true }));
+          } catch {}
+        }
+      } catch {}
+
+      let diag = '';
+      try {
+        const all = Array.from(document.querySelectorAll('input[type="file"]'));
+        const idx = all.indexOf(targetInput);
+        const got = targetInput.files && targetInput.files.length ? targetInput.files[0].name : '(empty)';
+        diag = ` | inputs=${all.length} picked=${idx} accept=${targetInput.accept || '(none)'} cls=${(targetInput.className || '').toString().slice(0, 40)} vis=${targetInput.offsetParent ? 'y' : 'n'} readback=${got} dtlen=${dt.files ? dt.files.length : 'n/a'} itemsLen=${dt.items ? dt.items.length : 'n/a'} isFile=${(() => { try { return (typeof File !== 'undefined' && file instanceof File) ? 'y' : 'n'; } catch { return 'e'; } })()} filetype=${file && file.name ? 'ok' : 'bad'} err=${assignErr || '-'} dterr=${dtErr || '-'}`;
+      } catch {}
+      return { success: true, message: `已成功注入文件 [${filename}] (${(len / 1024).toFixed(1)} KB) 并触发上传响应${diag}` };
     } catch (err) {
       return { success: false, error: `文件上传注入失败: ${err.message}` };
     }
@@ -1160,6 +1297,11 @@
       }
       case 'TYPE': {
         const res = executeType(payload.id, payload.text, payload.clearFirst, payload.snapshot_id);
+        sendResponse(res);
+        break;
+      }
+      case 'INSERT_TEXT': {
+        const res = executeInsertText(payload.id, payload.text, payload.snapshot_id);
         sendResponse(res);
         break;
       }

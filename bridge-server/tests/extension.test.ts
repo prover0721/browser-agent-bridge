@@ -627,3 +627,40 @@ test('semantic action buttons (span/div without cursor:pointer or onclick) are c
   assert.equal(clickRes.success, true);
   assert.equal(clicked, true);
 });
+
+test('browser_snapshot with ignore_dialog: true bypasses dialog isolation', () => {
+  const page = content('<div><button>Background Action</button></div><div role="dialog" aria-modal="true"><h3>浮层</h3><button>Modal Action</button></div>');
+  const snapshotWithDialog = page.call('SNAPSHOT', { ignore_dialog: false }).data;
+  assert.match(snapshotWithDialog, /当前活动弹窗: 浮层/);
+
+  const snapshotIgnored = page.call('SNAPSHOT', { ignore_dialog: true }).data;
+  assert.doesNotMatch(snapshotIgnored, /当前活动弹窗/);
+  assert.match(snapshotIgnored, /Background Action/);
+  assert.match(snapshotIgnored, /Modal Action/);
+});
+
+test('empty dialog container without interactive elements is ignored as ghost modal', () => {
+  const page = content('<div class="dialog-container"></div><div class="main-content"><button>Main Button</button></div>');
+  const snapshot = page.call('SNAPSHOT').data;
+  assert.doesNotMatch(snapshot, /当前活动弹窗/);
+  assert.match(snapshot, /Main Button/);
+});
+
+test('network-interceptor spoofs visibilityState and hasFocus', () => {
+  const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', { runScripts: 'outside-only' });
+  const window = dom.window as any;
+  window.eval(readFileSync(new URL('browser-extension/network-interceptor.js', root), 'utf8'));
+  assert.equal(window.document.visibilityState, 'visible');
+  assert.equal(window.document.hidden, false);
+  assert.equal(window.document.hasFocus(), true);
+});
+
+test('ensureAiWindow specifies 1440x900 desktop dimensions and mutes background tabs', async () => {
+  const page = background();
+  const created = await page.call('browser_create_window', { url: 'https://example.com/desktop' });
+  assert.equal(page.windowCreates[0].width, 1440);
+  assert.equal(page.windowCreates[0].height, 900);
+  assert.equal(page.windowCreates[0].focused, false);
+  const mutedUpdates = page.tabUpdates.filter((u: any) => u.muted === true);
+  assert.ok(mutedUpdates.length > 0);
+});

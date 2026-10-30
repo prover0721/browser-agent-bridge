@@ -62,7 +62,7 @@ const MIME_MAP: Record<string, string> = {
 const server = new Server(
   {
     name: 'browser-agent-bridge',
-    version: '1.9.4',
+    version: '1.9.5',
   },
   {
     capabilities: {
@@ -523,6 +523,10 @@ const TOOLS: Tool[] = [
           type: 'number',
           description: '可选：最多返回的元素数量上限（默认为 50）',
         },
+        ignore_dialog: {
+          type: 'boolean',
+          description: '可选：是否强制跳过模态弹窗/遮罩检测，直接输出底层完整页面元素（默认为 false）',
+        },
       },
       required: [],
     },
@@ -884,7 +888,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.4 Semantic Action Revealer & Text-Click) started successfully over stdio.');
+  console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.5 Background Visibility & Anti-Ghost Dialog) started successfully over stdio.');
 }
 
 main().catch((err) => {

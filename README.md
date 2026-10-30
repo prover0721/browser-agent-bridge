@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-1.9.4-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-1.9.5-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -55,7 +55,7 @@
 | `browser_create_tab` / `browser_close_tab` | 创建 / 关闭标签页 |
 | `browser_bind_tab` / `browser_unbind_tab` | 绑定 / 解除当前会话的目标标签页 |
 | `browser_switch_tab` | 静默切换受控页面；`focused: true` 才显示到前台 |
-| `browser_snapshot` | 获取交互元素编号和 Snapshot ID（默认视口优先智能瘦身，支持活动弹窗置顶） |
+| `browser_snapshot` | 获取交互元素编号和 Snapshot ID（默认视口优先智能瘦身，支持活动弹窗置顶与 `ignore_dialog: true` 穿透） |
 | `browser_click` | **【v1.9.4+ 推荐】点击元素（支持编号/文字/选择器）**：支持通过 `element_id`、按钮文本（`text: "编辑"`）或选择器（`selector`）点击；内置前置 hover 链 |
 | `browser_type` | 填写指定元素；支持自定义 Label/Radio 联动与表单响应；可传 `snapshot_id` 校验版本 |
 | `browser_hover` | **【v1.9.3+ 推荐】鼠标悬停/Hover**：精准悬停在卡片或元素上，唤醒 React/Vue 条件浮层按钮（如 BOSS直聘简历的「编辑」「添加」「同步」按钮） |
@@ -77,6 +77,10 @@
 | `browser_go_back` / `browser_go_forward` / `browser_reload` | **【v1.9+ 推荐】基础导航控制**：控制当前受控标签页后退、前进或硬刷新 |
 | `browser_reload_extension` | **【v1.9.2+ 推荐】一键/自动热重载扩展**：执行 `chrome.runtime.reload()` 秒级重载扩展并同步刷新受控网页，免去手动前往 `chrome://extensions` 页面刷新的繁琐步骤 |
 
+- **后台渲染保活与假弹窗过滤 (v1.9.5 新增)**：
+  - **主世界 Page Visibility 伪装与底层时钟保活**：拦截重写 `document.visibilityState` 为 `'visible'`、`document.hidden` 为 `false`，并对 `document.hasFocus()` 恒真，结合无声 AudioContext 保持底层事件循环活跃，彻底破除 Chromium 后台 0 FPS 冻结与定时器降频（Timer Alignment），解决单页应用（SPA）在后台“未命名”和卡在加载骨架屏的顽疾。
+  - **严格弹窗判定与穿透容错 (Anti-Ghost Dialog Filter)**：移除 `.chat-conversation` 等常规主页面容器误报；排除 0 尺寸与无交互子元素的骨架占位；取消将主内容区主观标记为“底层遮罩（操作受限）”，支持 `ignore_dialog: true` 一键穿透任意浮层直接操作主界面。
+  - **标准化桌面级后台视口 (1440x900) 与后台静音**：为 AI 专属后台工作窗口赋予 1440x900 标准桌面分辨率，杜绝小窗口触发移动端汉堡菜单折叠；自动为后台任务标签页开启静音（`muted: true`），零干扰用户前台工作。
 - **语义动作穿透与多模态点击 (v1.9.4 新增)**：
   - **React 合成事件与无原生属性动作穿透**：针对 BOSS直聘等现代 React 应用采用顶层合成事件代理（SyntheticEvent），且操作按钮为普通 `<span>`/`<div>`（静态无 `cursor: pointer` 且 `el.onclick === null`），快照收集器通过语义动作关键词（如“编辑”、“添加”、“同步”、“删除”、“修改”等）与常见 class 模式直接穿透判定为交互元素，不再因缺少原生点击属性被误过滤。
   - **快照动态 CSS 浮层样式强制注入**：在快照提取期间向页面注入隔离样式表，强制展现常态下被 CSS `:hover` 伪类隐藏的卡片操作层与按钮，突破 CSS hover 隔离。
@@ -128,6 +132,6 @@ npm test
 npm audit
 ```
 
-全套 38 项测试覆盖语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 42 项测试覆盖后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。
