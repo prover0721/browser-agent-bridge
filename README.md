@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-1.9.5-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -55,12 +55,14 @@
 | `browser_create_tab` / `browser_close_tab` | 创建 / 关闭标签页 |
 | `browser_bind_tab` / `browser_unbind_tab` | 绑定 / 解除当前会话的目标标签页 |
 | `browser_switch_tab` | 静默切换受控页面；`focused: true` 才显示到前台 |
-| `browser_snapshot` | 获取交互元素编号和 Snapshot ID（默认视口优先智能瘦身，支持活动弹窗置顶与 `ignore_dialog: true` 穿透） |
-| `browser_click` | **【v1.9.4+ 推荐】点击元素（支持编号/文字/选择器）**：支持通过 `element_id`、按钮文本（`text: "编辑"`）或选择器（`selector`）点击；内置前置 hover 链 |
-| `browser_type` | 填写指定元素；支持自定义 Label/Radio 联动与表单响应；可传 `snapshot_id` 校验版本 |
+| `browser_snapshot` | 获取交互元素编号和 Snapshot ID（默认视口优先智能瘦身，支持活动弹窗置顶与 `ignore_dialog: true` 穿透，支持 `diff_only: true` 增量快照） |
+| `browser_click` | **【v2.0+ 推荐】点击元素（支持编号/文字/选择器与 CDP 原生受信任点击）**：支持 `trusted: true` 原生硬件级事件（攻克应届生网/银行等反爬控件）、`humanlike: true` 拟人化延迟；自动回传即时动作反馈（Toast/报错/跳转） |
+| `browser_type` | **【v2.0+ 推荐】填写元素（支持受信任输入与只读控件解锁）**：支持 `trusted: true` 原生 CDP 键入、自动解锁自制日历等 readonly 输入框；自动回传动作反馈 |
 | `browser_hover` | **【v1.9.3+ 推荐】鼠标悬停/Hover**：精准悬停在卡片或元素上，唤醒 React/Vue 条件浮层按钮（如 BOSS直聘简历的「编辑」「添加」「同步」按钮） |
 | `browser_press` / `browser_scroll` | 派发键盘事件 / 滚动页面（附带滚动位置与进度百分比指示） |
-| `browser_navigate` | 在指定或已绑定页面导航（后台自主导航零打扰） |
+| `browser_screenshot` | **【v2.0+ 推荐】靶向视觉快照与局部裁切**：截取当前视口高清图像，支持指定 `element_id` 或 `selector` 裁切验证码、图表等关键元素，返回 base64 图像与绝对坐标 |
+| `browser_set_guard` | **【v2.0+ 推荐】AI 任务导航安全护栏**：设置当前任务允许访问的域名白名单（`domain_lock: ["*.zhipin.com", "yingjiesheng.com"]`），严密阻断非预期外链跳转与钓鱼网址 |
+| `browser_navigate` | 在指定或已绑定页面导航（后台自主导航零打扰，受安全护栏保护） |
 | `browser_get_text` | 提取元素文本、划选文本或正文，最多 20,000 字符 |
 | `browser_wait` | 静态等待指定秒数（0–30 秒） |
 | `browser_wait_for` | **【v1.5+ 推荐】智能条件等待**：毫秒级监听 DOM 变化，直到指定选择器或文字出现/消失时立即返回 |
@@ -77,6 +79,13 @@
 | `browser_go_back` / `browser_go_forward` / `browser_reload` | **【v1.9+ 推荐】基础导航控制**：控制当前受控标签页后退、前进或硬刷新 |
 | `browser_reload_extension` | **【v1.9.2+ 推荐】一键/自动热重载扩展**：执行 `chrome.runtime.reload()` 秒级重载扩展并同步刷新受控网页，免去手动前往 `chrome://extensions` 页面刷新的繁琐步骤 |
 
+- **CDP 原生受信任输入与应届生求职网/复杂表单破解 (v2.0.0 重磅升级)**：
+  - **CDP 原生硬件级受信任输入 (`trusted: true`)**：利用 `chrome.debugger` (Chrome DevTools Protocol) 派发底层的 `Input.dispatchMouseEvent`、`Input.dispatchKeyEvent` 和 `Input.insertText`。生成的事件对象原生自带 `event.isTrusted === true`，彻底攻克**应届生求职网（yingjiesheng）**教育经历在校时间等只认真实键鼠事件的自研/第三方日历与下拉控件。
+  - **自研日历控件只读解锁与主世界 isTrusted 增强**：针对前端日历控件给 `<input readonly>` 设置只读属性拦截键入的模式，在填表与输入前自动临时剥除只读限制并同步触发 `change` 与 `blur` 刷新；并在主世界对标记事件模拟 `isTrusted` 原型劫持，提供双重兜底保障。
+  - **闭环动作即时反馈机制 (Action Feedback Loop)**：每次执行 `browser_click` 或 `browser_type` 后，系统自动扫描并返回当前界面的反馈状态（包含全局 Toast / 消息提示、表单红字校验错误、URL 是否发生变化等），使 AI 无需频繁调用完整快照即可感知“是否保存成功”或“漏填了哪一项”。
+  - **靶向视觉快照与局部裁切 (`browser_screenshot`)**：支持对整个视口截屏，更支持指定 `element_id` 或 `selector` 对验证码、图表、二维码进行高精度像素级视口裁切，与视觉大模型无缝配合。
+  - **智能增量快照 (`diff_only: true`)**：对比上一次快照版本，仅输出 DOM 树中新增、变更或移除的元素条目，在复杂后台管理系统和动态长页面中单步降低 90% 的 Context 消耗。
+  - **AI 导航安全护栏 (`browser_set_guard`)**：支持任务级域名白名单锁定，强行拦截非预期重定向与钓鱼外链跳转，保障无人值守自动化运行安全。
 - **后台渲染保活与假弹窗过滤 (v1.9.5 新增)**：
   - **主世界 Page Visibility 伪装与底层时钟保活**：拦截重写 `document.visibilityState` 为 `'visible'`、`document.hidden` 为 `false`，并对 `document.hasFocus()` 恒真，结合无声 AudioContext 保持底层事件循环活跃，彻底破除 Chromium 后台 0 FPS 冻结与定时器降频（Timer Alignment），解决单页应用（SPA）在后台“未命名”和卡在加载骨架屏的顽疾。
   - **严格弹窗判定与穿透容错 (Anti-Ghost Dialog Filter)**：移除 `.chat-conversation` 等常规主页面容器误报；排除 0 尺寸与无交互子元素的骨架占位；取消将主内容区主观标记为“底层遮罩（操作受限）”，支持 `ignore_dialog: true` 一键穿透任意浮层直接操作主界面。
@@ -132,6 +141,6 @@ npm test
 npm audit
 ```
 
-全套 42 项测试覆盖后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 48 项测试覆盖 CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。

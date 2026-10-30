@@ -68,7 +68,7 @@ function background() {
   const tabs = new Map([[1, { id: 1, windowId: 10, active: true, status: 'complete', url: 'https://first.example', title: 'First' }], [2, { id: 2, windowId: 20, active: true, status: 'complete', url: 'https://second.example', title: 'Second' }]]);
   const removed: number[] = [];
   const windows = new Map([[10, { id: 10 }], [20, { id: 20 }]]);
-  const windowCreates: any[] = [], windowUpdates: any[] = [], tabUpdates: any[] = [], domCalls: any[] = [];
+  const windowCreates: any[] = [], windowUpdates: any[] = [], tabUpdates: any[] = [], domCalls: any[] = [], cdpCalls: any[] = [];
   let nextTab = 3, nextWindow = 30, foreground = 10;
   const createTab = (options: any) => {
     const tab = { id: nextTab++, windowId: options.windowId, url: options.url, title: options.url, active: options.active !== false, status: 'complete' };
@@ -96,8 +96,21 @@ function background() {
       goBack: async (id: number) => {},
       goForward: async (id: number) => {},
       reload: async (id: number, opts: any) => {},
+      captureVisibleTab: async () => 'data:image/jpeg;base64,mocked-image',
       onActivated: event(), onUpdated: event(), onRemoved: event(),
-      sendMessage: async (id: number, message: any) => { domCalls.push({ id, ...message }); return { success: true, message: 'done' }; }
+      sendMessage: async (id: number, message: any) => {
+        domCalls.push({ id, ...message });
+        if (message.action === 'GET_ELEMENT_BOUNDS') return { success: true, rect: { left: 10, top: 20, width: 100, height: 40 } };
+        return { success: true, message: 'done' };
+      }
+    },
+    debugger: {
+      attach: async () => {},
+      detach: async () => {},
+      sendCommand: async (target: any, method: string, params: any) => {
+        cdpCalls.push({ target, method, params });
+        return {};
+      }
     },
     windows: {
       get: async (id: number) => { const win = windows.get(id); if (!win) throw new Error('missing window'); return { ...win, tabs: [...tabs.values()].filter(tab => tab.windowId === id) }; },
@@ -167,7 +180,7 @@ function background() {
     await vm.runInContext('commandQueue', context);
     return ws.replies.at(-1);
   }
-  return { context, sockets, tabs, removed, call, windowCreates, windowUpdates, tabUpdates, domCalls, closeWindow: (id: number) => { windows.delete(id); for (const tab of tabs.values()) if (tab.windowId === id) tabs.delete(tab.id); }, foreground: () => foreground, setForeground: (id: number) => { foreground = id; }, ui(msg: any): any { let result; runtimeListener(msg, {}, (res: any) => result = res); return result; } };
+  return { context, sockets, tabs, removed, call, windowCreates, windowUpdates, tabUpdates, domCalls, cdpCalls, closeWindow: (id: number) => { windows.delete(id); for (const tab of tabs.values()) if (tab.windowId === id) tabs.delete(tab.id); }, foreground: () => foreground, setForeground: (id: number) => { foreground = id; }, ui(msg: any): any { let result; runtimeListener(msg, {}, (res: any) => result = res); return result; } };
 }
 
 test('missing explicit and lost bound tabs never fall back to the foreground', async () => {
@@ -663,4 +676,106 @@ test('ensureAiWindow specifies 1440x900 desktop dimensions and mutes background 
   assert.equal(page.windowCreates[0].focused, false);
   const mutedUpdates = page.tabUpdates.filter((u: any) => u.muted === true);
   assert.ok(mutedUpdates.length > 0);
+});
+
+test('action feedback loop captures toast and validation errors on click and type', () => {
+  const html = `
+    <div class="form-container">
+      <input id="name-input" type="text" />
+      <button id="submit-btn">保存</button>
+      <div class="el-message__content">保存成功，已同步至在线简历</div>
+      <div class="el-form-item__error">在校时间格式不正确</div>
+    </div>
+  `;
+  const page = content(html);
+  page.call('SNAPSHOT');
+  const typeRes = page.call('TYPE', { id: 1, text: '南京晓庄学院' });
+  assert.equal(typeRes.success, true);
+  assert.equal(typeRes.feedback?.toast, '保存成功，已同步至在线简历');
+  assert.ok(typeRes.feedback?.validation_errors?.includes('在校时间格式不正确'));
+
+  const clickRes = page.call('CLICK', { id: 2 });
+  assert.equal(clickRes.success, true);
+  assert.equal(clickRes.feedback?.toast, '保存成功，已同步至在线简历');
+});
+
+test('custom readonly datepicker input (yingjiesheng style) has readonly stripped and triggers onchange', () => {
+  const html = `
+    <form>
+      <input id="edu-time" class="wdate datepicker" type="text" readonly="readonly" value="" />
+    </form>
+  `;
+  const page = content(html);
+  const inputEl = page.window.document.getElementById('edu-time');
+  let changed = false;
+  inputEl.addEventListener('change', () => { changed = true; });
+
+  page.call('SNAPSHOT');
+  const res = page.call('TYPE', { id: 1, text: '2023-09 至 2027-06' });
+  assert.equal(res.success, true);
+  assert.equal(inputEl.value, '2023-09 至 2027-06');
+  assert.equal(inputEl.readOnly, false);
+  assert.equal(inputEl.hasAttribute('readonly'), false);
+  assert.equal(changed, true);
+});
+
+test('browser_snapshot with diff_only: true returns incremental changes', () => {
+  const html = `
+    <div id="wrapper">
+      <button id="btn1">首选城市</button>
+    </div>
+  `;
+  const page = content(html);
+  // 第一次全量快照
+  page.call('SNAPSHOT');
+
+  // 动态展开选项
+  const wrapper = page.window.document.getElementById('wrapper');
+  const newBtn = page.window.document.createElement('button');
+  newBtn.id = 'btn-beijing';
+  newBtn.textContent = '北京';
+  wrapper.appendChild(newBtn);
+
+  // 第二次增量快照
+  const diffSnap = page.call('SNAPSHOT', { diff_only: true }).data;
+  assert.match(diffSnap, /\[Snapshot Diff\]/);
+  assert.match(diffSnap, /\+ \[\d+\] BUTTON: "北京"/);
+});
+
+test('browser_screenshot captures viewport and returns element rect', async () => {
+  const page = background();
+  const res = await page.call('browser_screenshot', { element_id: 1, format: 'jpeg' });
+  assert.equal(res.result.data_url, 'data:image/jpeg;base64,mocked-image');
+  assert.ok(res.result.rect);
+  assert.equal(res.result.rect.width, 100);
+});
+
+test('browser_set_guard blocks navigation outside domain allowlist', async () => {
+  const page = background();
+  const guardRes = await page.call('browser_set_guard', { domain_lock: ['zhipin.com', 'yingjiesheng.com'] });
+  assert.deepEqual(guardRes.result.domain_lock, ['zhipin.com', 'yingjiesheng.com']);
+
+  // 允许的白名单跳转
+  const allowNav = await page.call('browser_navigate', { url: 'https://www.yingjiesheng.com/resume' });
+  assert.ok(allowNav.result);
+
+  // 被阻止的外链跳转
+  const blockedNav = await page.call('browser_navigate', { url: 'https://evil-tracking.com/phishing' });
+  assert.ok(blockedNav.error);
+  assert.match(blockedNav.error, /安全护栏拦截/);
+});
+
+test('browser_click and browser_type with trusted: true dispatches via CDP debugger', async () => {
+  const page = background();
+  const clickRes = await page.call('browser_click', { tab_id: 1, element_id: 1, trusted: true });
+  assert.equal(clickRes.result.success, true);
+  assert.equal(clickRes.result.trusted, true);
+
+  const typeRes = await page.call('browser_type', { tab_id: 1, element_id: 1, text: '2023-09', trusted: true });
+  assert.equal(typeRes.result.success, true);
+  assert.equal(typeRes.result.trusted, true);
+
+  const cdpInsert = page.cdpCalls.find((c: any) => c.method === 'Input.insertText');
+  assert.ok(cdpInsert);
+  assert.equal(cdpInsert.params.text, '2023-09');
 });

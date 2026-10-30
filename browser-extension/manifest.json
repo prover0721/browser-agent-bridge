@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "116",
   "name": "Browser Agent Bridge",
-  "version": "1.9.5",
+  "version": "2.0.0",
   "description": "让 AI Agent (Antigravity/Claude) 直接操控当前打开的真实浏览器标签页，实现零截图、低延迟自动化。",
   "permissions": [
     "sidePanel",
@@ -12,7 +12,8 @@
     "tabs",
     "bookmarks",
     "cookies",
-    "downloads"
+    "downloads",
+    "debugger"
   ],
   "host_permissions": [
     "<all_urls>"

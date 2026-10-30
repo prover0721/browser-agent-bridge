@@ -77,6 +77,24 @@
     }
   } catch {}
 
+  // 0.2 反爬虫与受信任事件伪装（破解应届生网/自制日期控件与表单的 isTrusted 校验）
+  try {
+    Object.defineProperty(navigator, 'webdriver', {
+      get: () => undefined,
+      configurable: true
+    });
+    const origTrustedDesc = Object.getOwnPropertyDescriptor(Event.prototype, 'isTrusted');
+    if (origTrustedDesc && origTrustedDesc.configurable) {
+      Object.defineProperty(Event.prototype, 'isTrusted', {
+        get: function () {
+          if (this.__ba_trusted || this.__ba_allow_paste) return true;
+          return origTrustedDesc.get ? origTrustedDesc.get.call(this) : false;
+        },
+        configurable: true
+      });
+    }
+  } catch {}
+
   // 1. Hook window.fetch
   if (typeof window.fetch === 'function') {
     const originalFetch = window.fetch;

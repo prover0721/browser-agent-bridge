@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-1.9.5-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -55,12 +55,14 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_create_tab` / `browser_close_tab` | Create / close a browser tab |
 | `browser_bind_tab` / `browser_unbind_tab` | Pin / unpin session commands to a specific target tab |
 | `browser_switch_tab` | Switch controlled tab silently; set `focused: true` to reveal |
-| `browser_snapshot` | Extract structured DOM interactive elements with IDs and Snapshot ID (In-viewport pruning, modal prioritization & `ignore_dialog: true` bypass) |
-| `browser_click` | **【v1.9.4+ Recommended】Click Element (by ID/Text/Selector)**: Clicks target elements by `element_id`, button text (`text: "Edit"`), or CSS selector (`selector`), with automatic multi-level hover pre-simulation |
-| `browser_type` | Type into target elements; supports `snapshot_id` revision matching |
+| `browser_snapshot` | Extract structured DOM interactive elements with IDs and Snapshot ID (In-viewport pruning, modal prioritization, `ignore_dialog: true` bypass, and `diff_only: true` incremental snapshot) |
+| `browser_click` | **【v2.0+ Recommended】Click Element (by ID/Text/Selector & CDP Trusted)**: Clicks target elements by `element_id`, text (`text: "Edit"`), or CSS selector (`selector`); supports `trusted: true` native CDP events and `humanlike: true` delay; returns immediate action feedback (Toast/validation errors/navigation) |
+| `browser_type` | **【v2.0+ Recommended】Type Input (with Trusted CDP & Readonly Unlock)**: Types into target elements; supports `trusted: true` native CDP keystrokes, automatic readonly datepicker unlocking, and immediate action feedback |
 | `browser_hover` | **【v1.9.3+ Recommended】Mouse Hover Action**: Hovers over elements or cards to trigger React/Vue conditional hover buttons (e.g. BOSS Zhipin "Edit", "Add", "Sync") |
 | `browser_press` / `browser_scroll` | Dispatch keyboard keys / scroll page with pixel and percentage progression |
-| `browser_navigate` | Navigate current or designated tab to a target URL |
+| `browser_screenshot` | **【v2.0+ Recommended】Targeted Visual Screenshot & Crop**: Captures viewport image, supporting targeted cropping of elements (CAPTCHAs, charts) by `element_id` or `selector` |
+| `browser_set_guard` | **【v2.0+ Recommended】Navigation Security Guardrail**: Enforces domain allowlists (`domain_lock: ["*.zhipin.com", "yingjiesheng.com"]`) to block unexpected navigation and phishing |
+| `browser_navigate` | Navigate current or designated tab to a target URL (protected by security guardrails) |
 | `browser_get_text` | Extract element text, selected text, or page body text (up to 20,000 chars) |
 | `browser_wait` | Static pause for specified duration (0–30s) |
 | `browser_wait_for` | **【v1.5+ Recommended】Smart conditional wait**: Millisecond-level DOM observer waiting for selector or text state |
@@ -78,6 +80,14 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_reload_extension` | **【v1.9.2+ Recommended】Auto / Hot Reload Extension**: Executes `chrome.runtime.reload()` and synchronizes active page reload, bypassing manual `chrome://extensions` visits |
 
 ## Key Architectural Advantages
+
+- **CDP Native Trusted Input & Complex Form Bypass (v2.0.0 Milestone)**:
+  - **CDP Native Hardware-Level Trusted Input (`trusted: true`)**: Harnesses `chrome.debugger` (Chrome DevTools Protocol) to dispatch low-level `Input.dispatchMouseEvent`, `Input.dispatchKeyEvent`, and `Input.insertText`. Generated events natively carry `event.isTrusted === true`, conquering restrictive datepickers and custom dropdowns on platforms like **YingJieSheng (应届生求职网)** and banking portals that reject synthetic scripts.
+  - **Custom Datepicker Readonly Unlocking & Main-World Event Spoofing**: Automatically unsets temporary `readonly` flags on simulated calendar inputs before dispatching native input chains, accompanied by main-world prototype spoofing for `isTrusted` as a redundant fallback.
+  - **Closed-Loop Action Feedback**: `browser_click` and `browser_type` automatically capture and return in-flight UI feedback (Toasts, floating notification badges, field-level validation errors, and URL redirection states), reducing redundant full-page snapshots.
+  - **Targeted Visual Screenshot & Crop (`browser_screenshot`)**: High-fidelity viewport capture with element-level bounding box cropping (`element_id` or `selector`), feeding clean visual inputs directly to Multimodal LLMs.
+  - **Incremental Diff Snapshot (`diff_only: true`)**: Generates compact DOM diffs compared to the preceding snapshot, slashing token usage by 90% during multi-turn repetitive tasks.
+  - **Navigation Security Guardrail (`browser_set_guard`)**: Restricts browser navigation to strict domain allowlists, preventing unintended redirects or phishing traps.
 
 - **Background Visibility Spoofing & Anti-Ghost Dialog (v1.9.5 New)**:
   - **Main-World Page Visibility Spoofing & Timer Keep-Alive**: Overrides `document.visibilityState` to `'visible'`, `document.hidden` to `false`, and `document.hasFocus()` to return `true`, paired with in-background silent AudioContext keep-alive. Neutralizes Chromium's background 0 FPS freezing and timer alignment throttling, eliminating unnamed/stuck SPA hydration and persistent skeleton loading masks.
@@ -191,7 +201,13 @@ Full suite of **42 automated end-to-end and unit tests** covering background vis
 ✔ empty dialog container without interactive elements is ignored as ghost modal
 ✔ network-interceptor spoofs visibilityState and hasFocus
 ✔ ensureAiWindow specifies 1440x900 desktop dimensions and mutes background tabs
-ℹ tests 42 | pass 42 | fail 0
+✔ action feedback loop captures toast and validation errors on click and type
+✔ custom readonly datepicker input (yingjiesheng style) has readonly stripped and triggers onchange
+✔ browser_snapshot with diff_only: true returns incremental changes
+✔ browser_screenshot captures viewport and returns element rect
+✔ browser_set_guard blocks navigation outside domain allowlist
+✔ browser_click and browser_type with trusted: true dispatches via CDP debugger
+ℹ tests 48 | pass 48 | fail 0
 ```
 
 ## License

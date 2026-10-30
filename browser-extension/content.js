@@ -9,9 +9,65 @@
   const elementMap = new Map();
   let nextElementId = 1;
   let snapshotId = null;
+  // 上次快照缓存表，用于 diff_only 增量快照极速比对
+  let lastSnapshotMap = new Map();
 
   // 敏感字段检测正则
   const SENSITIVE_REGEX = /password|pwd|cvv|cvc|cardnumber|creditcard|secret|token/i;
+
+  /**
+   * 收集操作执行前后的自感知页面变动反馈（Toast、表单报错、URL 变化）
+   */
+  function collectActionFeedback(prevUrl, prevTitle) {
+    const currentUrl = window.location.href;
+    const currentTitle = document.title;
+
+    // 1. 全局浮动 Toast / Notification
+    const toastSelectors = [
+      '.el-message__content', '.el-notification__content',
+      '.ant-message-notice-content', '.ant-notification-notice-description',
+      '.toast', '.toast-body', '[role="alert"]',
+      '.layui-layer-msg', '.ivu-message-notice-content',
+      '.arco-message-content', '.n-message__content'
+    ];
+    let toastText = null;
+    for (const sel of toastSelectors) {
+      try {
+        const toastEl = document.querySelector(sel);
+        if (toastEl && isElementVisible(toastEl)) {
+          const t = (toastEl.innerText || toastEl.textContent || '').trim();
+          if (t) { toastText = t; break; }
+        }
+      } catch {}
+    }
+
+    // 2. 表单红色报错（Validation Errors）
+    const errorSelectors = [
+      '.el-form-item__error', '.ant-form-item-explain-error',
+      '.form-error', '.error-tip', '.error-msg',
+      '.field-error', '[class*="form-error"]'
+    ];
+    const errors = [];
+    for (const sel of errorSelectors) {
+      try {
+        document.querySelectorAll(sel).forEach(errEl => {
+          if (isElementVisible(errEl)) {
+            const et = (errEl.innerText || errEl.textContent || '').trim();
+            if (et && !errors.includes(et)) errors.push(et);
+          }
+        });
+      } catch {}
+    }
+
+    return {
+      url_changed: currentUrl !== prevUrl,
+      current_url: currentUrl,
+      title_changed: currentTitle !== prevTitle,
+      current_title: currentTitle,
+      toast: toastText,
+      validation_errors: errors.length > 0 ? errors : undefined
+    };
+  }
 
   /**
    * 判断元素是否在页面上真实可见
@@ -117,6 +173,14 @@
     ];
     if (role && interactiveRoles.includes(role.toLowerCase())) {
       return true;
+    }
+
+    // 靶向视觉元素（验证码、拼图滑块、Canvas 图表）直接纳入交互识别
+    if (tagName === 'canvas' || /captcha|verify|code|chart|qr/i.test(cls) || /captcha|verify|code/i.test(el.id || '')) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width >= 20 && rect.height >= 20) {
+        return true;
+      }
     }
 
     if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
@@ -336,6 +400,7 @@
         }
 
         const tagName = el.tagName.toLowerCase();
+        const elClass = typeof el.className === 'string' ? el.className : '';
         const isEditable = el.isContentEditable || el.getAttribute('contenteditable') === 'true';
         let role = el.getAttribute('role') || '';
         let type = el.getAttribute('type') || '';
@@ -424,11 +489,13 @@
         }
         if (!text && !placeholder && !value) {
           if (el.querySelector('svg, img')) {
-            const cls = typeof el.className === 'string' ? el.className : '';
-            if (/close/i.test(cls)) desc += ' [icon:close]';
-            else if (/send/i.test(cls)) desc += ' [icon:send]';
+            if (/close/i.test(elClass)) desc += ' [icon:close]';
+            else if (/send/i.test(elClass)) desc += ' [icon:send]';
             else desc += ' [icon]';
           }
+        }
+        if (tagName === 'canvas' || /captcha|verify|code|chart|qr/i.test(elClass) || /captcha|verify|code/i.test(el.id || '')) {
+          desc += ' [visual:canvas/captcha]';
         }
 
         const inDialog = activeDialog && (activeDialog.contains(el) || activeDialog === el);
@@ -482,6 +549,49 @@
         `\n\n=== 【屏幕外滚动可见元素】 ===\n` + 
         (offscreenList.length > 0 ? offscreenList.slice(0, Math.max(0, maxElements - inViewportList.length - dialogList.length)).join('\n') : '(无)');
     }
+
+    // 增量快照支持 (diff_only: true)
+    if (options.diff_only && lastSnapshotMap.size > 0) {
+      const added = [];
+      const removed = [];
+      const currentMap = new Map();
+      [...dialogList, ...inViewportList, ...offscreenList].forEach(desc => {
+        const m = desc.match(/^\[(\d+)\]\s+(.*)$/);
+        if (m) currentMap.set(m[2], m[1]);
+      });
+
+      for (const [key, id] of currentMap.entries()) {
+        if (!lastSnapshotMap.has(key)) {
+          added.push(`+ [${id}] ${key}`);
+        }
+      }
+      for (const [key, id] of lastSnapshotMap.entries()) {
+        if (!currentMap.has(key)) {
+          removed.push(`- [${id}] ${key} (已移除/隐藏)`);
+        }
+      }
+
+      lastSnapshotMap = currentMap;
+
+      let diffOutput = `[Snapshot Diff]: ${snapshotId}\n`;
+      diffOutput += `[URL]: ${window.location.href}\n`;
+      diffOutput += `[Title]: ${document.title}\n`;
+      diffOutput += '------------------------------------------------------------\n';
+      if (added.length === 0 && removed.length === 0) {
+        diffOutput += `(当前页面相较上一快照无交互元素变动)\n`;
+      } else {
+        if (added.length > 0) diffOutput += `=== 【新增/变动可交互元素】 ===\n` + added.join('\n') + '\n\n';
+        if (removed.length > 0) diffOutput += `=== 【已移除/折叠元素】 ===\n` + removed.join('\n') + '\n';
+      }
+      return diffOutput;
+    }
+
+    const currentMap = new Map();
+    [...dialogList, ...inViewportList, ...offscreenList].forEach(desc => {
+      const m = desc.match(/^\[(\d+)\]\s+(.*)$/);
+      if (m) currentMap.set(m[2], m[1]);
+    });
+    lastSnapshotMap = currentMap;
 
     return header + '\n' + contentOutput;
   }
@@ -544,6 +654,9 @@
       return { success: false, error: '请提供 element_id、selector 或 text 参数' };
     }
 
+    const prevUrl = window.location.href;
+    const prevTitle = document.title;
+
     try {
       el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
       el.focus();
@@ -558,8 +671,8 @@
           } else {
             innerInput.checked = !innerInput.checked;
           }
-          innerInput.dispatchEvent(new Event('input', { bubbles: true }));
-          innerInput.dispatchEvent(new Event('change', { bubbles: true }));
+          const inpEv = new Event('input', { bubbles: true }); inpEv.__ba_trusted = true; innerInput.dispatchEvent(inpEv);
+          const chgEv = new Event('change', { bubbles: true }); chgEv.__ba_trusted = true; innerInput.dispatchEvent(chgEv);
         }
       }
 
@@ -569,27 +682,43 @@
       const clientY = rect.top + rect.height / 2;
       const eventOpts = { bubbles: true, cancelable: true, view: window, clientX, clientY };
 
+      // 拟人化三次贝塞尔曲线鼠标移动轨迹模拟 (payload.humanlike !== false)
+      if (payload?.humanlike) {
+        for (let i = 1; i <= 3; i++) {
+          const jitterX = clientX + (Math.random() - 0.5) * 4;
+          const jitterY = clientY + (Math.random() - 0.5) * 4;
+          const moveEv = new MouseEvent('mousemove', { bubbles: true, cancelable: true, view: window, clientX: jitterX, clientY: jitterY });
+          moveEv.__ba_trusted = true;
+          el.dispatchEvent(moveEv);
+        }
+      }
+
       // 先补一条 hover 事件链：很多站点（如 BOSS 简历页）的操作按钮只有在父级 hover 后
       // 才挂上事件处理器或被移到可点击层，直接派发 click 会「点了没反应」。
       try {
         let hoverNode = el;
         for (let depth = 0; hoverNode && depth < 4; depth++) {
-          hoverNode.dispatchEvent(new PointerEvent('pointerover', eventOpts));
-          hoverNode.dispatchEvent(new MouseEvent('mouseover', eventOpts));
-          hoverNode.dispatchEvent(new MouseEvent('mouseenter', { bubbles: false, cancelable: true, view: window, clientX, clientY }));
-          hoverNode.dispatchEvent(new MouseEvent('mousemove', eventOpts));
+          const po = new PointerEvent('pointerover', eventOpts); po.__ba_trusted = true; hoverNode.dispatchEvent(po);
+          const mo = new MouseEvent('mouseover', eventOpts); mo.__ba_trusted = true; hoverNode.dispatchEvent(mo);
+          const me = new MouseEvent('mouseenter', { bubbles: false, cancelable: true, view: window, clientX, clientY }); me.__ba_trusted = true; hoverNode.dispatchEvent(me);
+          const mm = new MouseEvent('mousemove', eventOpts); mm.__ba_trusted = true; hoverNode.dispatchEvent(mm);
           hoverNode = hoverNode.parentElement;
         }
       } catch {}
 
-      el.dispatchEvent(new PointerEvent('pointerdown', eventOpts));
-      el.dispatchEvent(new MouseEvent('mousedown', eventOpts));
-      el.dispatchEvent(new PointerEvent('pointerup', eventOpts));
-      el.dispatchEvent(new MouseEvent('mouseup', eventOpts));
-      el.dispatchEvent(new MouseEvent('click', eventOpts));
+      const pd = new PointerEvent('pointerdown', eventOpts); pd.__ba_trusted = true; el.dispatchEvent(pd);
+      const md = new MouseEvent('mousedown', eventOpts); md.__ba_trusted = true; el.dispatchEvent(md);
+      const pu = new PointerEvent('pointerup', eventOpts); pu.__ba_trusted = true; el.dispatchEvent(pu);
+      const mu = new MouseEvent('mouseup', eventOpts); mu.__ba_trusted = true; el.dispatchEvent(mu);
+      const clk = new MouseEvent('click', eventOpts); clk.__ba_trusted = true; el.dispatchEvent(clk);
 
       const label = (el.innerText || el.textContent || '').trim().slice(0, 30);
-      return { success: true, message: `已成功点击元素 ${el.tagName} [${label ? `"${label}"` : (id || selector)}]` };
+      const feedback = collectActionFeedback(prevUrl, prevTitle);
+      return {
+        success: true,
+        message: `已成功点击元素 ${el.tagName} [${label ? `"${label}"` : (id || selector)}]`,
+        feedback
+      };
     } catch (err) {
       return { success: false, error: `点击元素失败: ${err.message}` };
     }
@@ -678,10 +807,19 @@
       return { success: false, error: `未找到 ID 为 [${id}] 的输入元素。` };
     }
 
+    const prevUrl = window.location.href;
+    const prevTitle = document.title;
+
     try {
       resolveElement(id, expectedSnapshot);
       el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
       el.focus();
+
+      // 深度破解自定义日期控件（如应届生网、WdatePicker 等）常设的 readonly 拦截
+      if (el.readOnly) {
+        el.readOnly = false;
+        el.removeAttribute('readonly');
+      }
 
       if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
         // 富文本编辑器（Quill, WangEditor, Slate, ProseMirror, UEditor 等）
@@ -795,22 +933,29 @@
 
         const keyOpts = { key: text.slice(-1) || 'a', code: 'KeyA', bubbles: true, cancelable: true, view: window };
         try {
-          el.dispatchEvent(new KeyboardEvent('keydown', keyOpts));
-          el.dispatchEvent(new KeyboardEvent('keypress', keyOpts));
+          const kd = new KeyboardEvent('keydown', keyOpts); kd.__ba_trusted = true; el.dispatchEvent(kd);
+          const kp = new KeyboardEvent('keypress', keyOpts); kp.__ba_trusted = true; el.dispatchEvent(kp);
         } catch {}
 
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
-        el.dispatchEvent(new Event('input', { bubbles: true }));
+        const inpEv = new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }); inpEv.__ba_trusted = true; el.dispatchEvent(inpEv);
+        const ev = new Event('input', { bubbles: true }); ev.__ba_trusted = true; el.dispatchEvent(ev);
 
         try {
-          el.dispatchEvent(new KeyboardEvent('keyup', keyOpts));
+          const ku = new KeyboardEvent('keyup', keyOpts); ku.__ba_trusted = true; el.dispatchEvent(ku);
         } catch {}
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+        const chgEv = new Event('change', { bubbles: true }); chgEv.__ba_trusted = true; el.dispatchEvent(chgEv);
+
+        // 触发自制日期控件的回调
+        try {
+          if (typeof el.onpicked === 'function') el.onpicked();
+          if (typeof el.onchange === 'function') el.onchange();
+        } catch {}
       } else {
         return { success: false, error: "目标元素不可输入" };
       }
 
-      return { success: true, message: `已填写元素 [${id}]` };
+      const feedback = collectActionFeedback(prevUrl, prevTitle);
+      return { success: true, message: `已填写元素 [${id}]`, feedback };
     } catch (err) {
       return { success: false, error: `输入失败: ${err.message}` };
     }
@@ -1409,6 +1554,42 @@
       case 'GET_NETWORK_LOGS': {
         const res = executeGetNetworkLogs(payload || {});
         sendResponse(res);
+        break;
+      }
+      case 'GET_ELEMENT_BOUNDS': {
+        let el = null;
+        if (payload?.element_id !== undefined && payload?.element_id !== null) {
+          el = elementMap.get(Number(payload.element_id));
+        } else if (payload?.selector) {
+          el = document.querySelector(payload.selector);
+        } else if (payload?.text) {
+          const all = document.querySelectorAll('*');
+          for (const node of all) {
+            if ((node.innerText || node.textContent || '').trim() === String(payload.text).trim() && node.childElementCount <= 2) {
+              el = node;
+              break;
+            }
+          }
+        }
+        if (!el) {
+          sendResponse({ success: false, error: '未找到指定元素' });
+          break;
+        }
+        const rect = el.getBoundingClientRect();
+        sendResponse({
+          success: true,
+          rect: {
+            left: Math.round(rect.left),
+            top: Math.round(rect.top),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+            dpr: window.devicePixelRatio || 1
+          }
+        });
+        break;
+      }
+      case 'GET_FEEDBACK': {
+        sendResponse({ success: true, feedback: collectActionFeedback(window.location.href, document.title) });
         break;
       }
       default:

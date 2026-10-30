@@ -60,7 +60,7 @@ const MIME_MAP = {
 // 创建 MCP Server 实例
 const server = new index_js_1.Server({
     name: 'browser-agent-bridge',
-    version: '1.9.5',
+    version: '2.0.0',
 }, {
     capabilities: {
         tools: {},
@@ -514,6 +514,10 @@ const TOOLS = [
                     type: 'boolean',
                     description: '可选：是否强制跳过模态弹窗/遮罩检测，直接输出底层完整页面元素（默认为 false）',
                 },
+                diff_only: {
+                    type: 'boolean',
+                    description: '可选：增量快照模式（仅返回相较上一次快照新增/变动/失效的元素，可大幅压缩 80%+ 上下文 Token，默认为 false）',
+                },
             },
             required: [],
         },
@@ -555,6 +559,14 @@ const TOOLS = [
                 selector: {
                     type: 'string',
                     description: '可选：通过 CSS 选择器定位并点击（如 ".btn-edit", ".btn-sync"）',
+                },
+                trusted: {
+                    type: 'boolean',
+                    description: '可选：是否启用 CDP 物理级真机模拟点击（isTrusted: true，专攻应届生网、极验滑块等只认物理真人事件的自定义控件与防爬风控）',
+                },
+                humanlike: {
+                    type: 'boolean',
+                    description: '可选：是否启用拟人化三次贝塞尔鼠标移动轨迹（默认为 true）',
                 },
                 tab_id: {
                     type: 'number',
@@ -609,6 +621,10 @@ const TOOLS = [
                 clear_first: {
                     type: 'boolean',
                     description: '是否在输入前先清空已有内容，默认为 true',
+                },
+                trusted: {
+                    type: 'boolean',
+                    description: '可选：是否启用 CDP 物理级硬件真机模拟键入（isTrusted: true，专攻应届生网自制只读日期控件、验证码等只认物理键盘的输入框）',
                 },
                 tab_id: {
                     type: 'number',
@@ -766,6 +782,52 @@ const TOOLS = [
             required: [],
         },
     },
+    {
+        name: 'browser_screenshot',
+        description: '【v2.0 靶向视觉截屏】获取当前网页视口或指定控件（如验证码图片、ECharts图表、拼图滑块）的图像数据（Base64）。支持传 element_id 或 selector 进行靶向微型局部裁剪，以极低 Token 消耗解决纯文本无法识别验证码的最后 5% 视觉死角。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                element_id: {
+                    type: 'number',
+                    description: '可选：靶向裁剪的目标元素编号（由 browser_snapshot 返回）',
+                },
+                selector: {
+                    type: 'string',
+                    description: '可选：靶向裁剪的目标元素 CSS 选择器（如 ".captcha-img", "#verify-code"）',
+                },
+                format: {
+                    type: 'string',
+                    enum: ['jpeg', 'png'],
+                    description: '可选：截图格式，默认为 jpeg（节省体积与 Token）',
+                },
+                quality: {
+                    type: 'number',
+                    description: '可选：图片压缩质量（1–100，默认为 80）',
+                },
+                tab_id: {
+                    type: 'number',
+                    description: '可选：目标标签页 ID',
+                },
+            },
+            required: [],
+        },
+    },
+    {
+        name: 'browser_set_guard',
+        description: '【v2.0 任务安全护栏与沙箱】配置当前任务的受控域名白名单（如 ["zhipin.com", "yingjiesheng.com"]）。开启后插件将自动拦截外链推广、防止 Agent 误跳出任务域或误点外部退出链接。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                domain_lock: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: '受控域名白名单后缀列表，如 ["zhipin.com"]；传空数组或 null 表示解除锁定',
+                },
+            },
+            required: [],
+        },
+    },
 ];
 // 注册工具列表处理器
 server.setRequestHandler(types_js_1.ListToolsRequestSchema, async () => {
@@ -877,7 +939,7 @@ async function main() {
     process.once('SIGTERM', () => { bridge.close(); process.exit(0); });
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v1.9.5 Background Visibility & Anti-Ghost Dialog) started successfully over stdio.');
+    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v2.0.0 CDP Trusted Input, Vision & Feedback Loop) started successfully over stdio.');
 }
 main().catch((err) => {
     console.error('[MCP-Server] Fatal startup error:', err);

@@ -11,6 +11,52 @@ let lastSelectedText = '';
 let activeControlledTab = null;
 let boundTabId = null;   // 锁定的专属后台工作 Tab ID
 let aiWindowId = null;   // AI 专属独立工作窗口 ID（与用户主窗口彻底物理隔离）
+let domainLock = null;   // 任务安全护栏域名白名单
+const attachedDebuggers = new Set();
+
+// ── CDP Debugger 物理级真机受信任输入模拟（isTrusted === true） ──
+async function attachCdp(tabId) {
+  if (attachedDebuggers.has(tabId)) return;
+  if (!chrome.debugger) return;
+  try {
+    await chrome.debugger.attach({ tabId }, '1.3');
+    attachedDebuggers.add(tabId);
+  } catch (e) {
+    if (!e.message?.includes('already attached')) throw e;
+    attachedDebuggers.add(tabId);
+  }
+}
+
+async function cdpDispatchClick(tabId, x, y) {
+  if (!chrome.debugger) return;
+  await attachCdp(tabId);
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: Math.round(x),
+    y: Math.round(y)
+  });
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    button: 'left',
+    x: Math.round(x),
+    y: Math.round(y),
+    clickCount: 1
+  });
+  await new Promise(r => setTimeout(r, 30));
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    button: 'left',
+    x: Math.round(x),
+    y: Math.round(y),
+    clickCount: 1
+  });
+}
+
+async function cdpDispatchInsertText(tabId, text) {
+  if (!chrome.debugger) return;
+  await attachCdp(tabId);
+  await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text });
+}
 
 // 从 storage 加载配置端口
 chrome.storage.local.get(['bridgePort'], (res) => {
@@ -879,6 +925,70 @@ async function handleBridgeCommand(method, params) {
     }
   }
 
+  // ── 2.0 任务安全护栏与域名白名单 ──
+  if (method === 'browser_set_guard') {
+    if (params.domain_lock) {
+      domainLock = Array.isArray(params.domain_lock) ? params.domain_lock : [params.domain_lock];
+    } else {
+      domainLock = null;
+    }
+    return {
+      result: {
+        domain_lock: domainLock,
+        message: `安全护栏已生效，受控域名白名单: ${domainLock ? domainLock.join(', ') : '无限制'}`
+      }
+    };
+  }
+
+  // ── 2.0 靶向屏幕与局部元素截图 ──
+  if (method === 'browser_screenshot') {
+    const targetTab = await resolveTargetTab(params.tab_id);
+    if (!targetTab || !targetTab.id) return { error: '未找到目标标签页' };
+
+    const format = params.format === 'png' ? 'png' : 'jpeg';
+    const quality = Math.min(100, Math.max(1, Number(params.quality) || 80));
+
+    let dataUrl = '';
+    try {
+      dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, {
+        format,
+        quality: format === 'png' ? undefined : quality
+      });
+    } catch (err) {
+      return { error: `截图失败: ${err.message}` };
+    }
+
+    if (params.element_id !== undefined || params.selector) {
+      await ensureContentScriptInjected(targetTab.id);
+      try {
+        const bounds = await chrome.tabs.sendMessage(targetTab.id, {
+          action: 'GET_ELEMENT_BOUNDS',
+          payload: { element_id: params.element_id, selector: params.selector }
+        });
+        if (bounds?.success && bounds.rect) {
+          return {
+            result: {
+              data_url: dataUrl,
+              rect: bounds.rect,
+              element_id: params.element_id,
+              selector: params.selector,
+              format,
+              message: `已成功获取目标元素视口截图坐标 (x: ${bounds.rect.left}, y: ${bounds.rect.top}, w: ${bounds.rect.width}, h: ${bounds.rect.height})`
+            }
+          };
+        }
+      } catch {}
+    }
+
+    return {
+      result: {
+        data_url: dataUrl,
+        format,
+        message: '已成功捕获当前视口屏幕截图'
+      }
+    };
+  }
+
   // Navigation without an explicit target starts independent work automatically.
   if (method === 'browser_navigate' && !params.tab_id) {
     if (!params.url) return { error: '未提供导航目标 URL' };
@@ -914,6 +1024,15 @@ async function handleBridgeCommand(method, params) {
     if (!params.url) return { error: '未提供导航目标 URL' };
     let url = params.url;
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    if (domainLock && domainLock.length > 0) {
+      try {
+        const parsed = new URL(url);
+        const isAllowed = domainLock.some(d => parsed.hostname.endsWith(d));
+        if (!isAllowed) {
+          return { error: `[安全护栏拦截]: 目标网址 ${url} 不在当前任务白名单 (${domainLock.join(', ')}) 中，已阻止跳出！` };
+        }
+      } catch {}
+    }
     await chrome.tabs.update(targetTab.id, { url });
     await waitForTabReady(targetTab.id);
     const loaded = await chrome.tabs.get(targetTab.id);
@@ -934,17 +1053,40 @@ async function handleBridgeCommand(method, params) {
           viewport_only: params.viewport_only !== false,
           max_elements: params.max_elements || 50,
           reveal_hover: params.reveal_hover !== false,
-          ignore_dialog: params.ignore_dialog === true
+          ignore_dialog: params.ignore_dialog === true,
+          diff_only: params.diff_only === true
         };
         break;
       case 'browser_click':
+        if (params.trusted === true) {
+          await ensureContentScriptInjected(targetTab.id);
+          const bounds = await chrome.tabs.sendMessage(targetTab.id, {
+            action: 'GET_ELEMENT_BOUNDS',
+            payload: { element_id: params.element_id, selector: params.selector, text: params.text }
+          });
+          if (bounds?.success && bounds.rect) {
+            const x = bounds.rect.left + bounds.rect.width / 2;
+            const y = bounds.rect.top + bounds.rect.height / 2;
+            await cdpDispatchClick(targetTab.id, x, y);
+            const fbRes = await chrome.tabs.sendMessage(targetTab.id, { action: 'GET_FEEDBACK' }).catch(() => null);
+            return {
+              result: {
+                success: true,
+                trusted: true,
+                message: `已通过 CDP 物理级真机模拟点击元素 (x: ${Math.round(x)}, y: ${Math.round(y)}, isTrusted: true)`,
+                feedback: fbRes?.feedback
+              }
+            };
+          }
+        }
         action = 'CLICK';
         payload = {
           id: params.element_id,
           element_id: params.element_id,
           text: params.text,
           selector: params.selector,
-          snapshot_id: params.snapshot_id
+          snapshot_id: params.snapshot_id,
+          humanlike: params.humanlike !== false
         };
         break;
       case 'browser_hover':
@@ -958,6 +1100,29 @@ async function handleBridgeCommand(method, params) {
         };
         break;
       case 'browser_type':
+        if (params.trusted === true) {
+          await ensureContentScriptInjected(targetTab.id);
+          const bounds = await chrome.tabs.sendMessage(targetTab.id, {
+            action: 'GET_ELEMENT_BOUNDS',
+            payload: { element_id: params.element_id, selector: params.selector }
+          });
+          if (bounds?.success && bounds.rect) {
+            const x = bounds.rect.left + bounds.rect.width / 2;
+            const y = bounds.rect.top + bounds.rect.height / 2;
+            await cdpDispatchClick(targetTab.id, x, y);
+            await new Promise(r => setTimeout(r, 40));
+            await cdpDispatchInsertText(targetTab.id, params.text);
+            const fbRes = await chrome.tabs.sendMessage(targetTab.id, { action: 'GET_FEEDBACK' }).catch(() => null);
+            return {
+              result: {
+                success: true,
+                trusted: true,
+                message: `已通过 CDP 物理级真机模拟向元素输入 "${params.text}" (isTrusted: true)`,
+                feedback: fbRes?.feedback
+              }
+            };
+          }
+        }
         action = 'TYPE';
         payload = {
           id: params.element_id,
