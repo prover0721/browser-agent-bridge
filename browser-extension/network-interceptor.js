@@ -77,12 +77,73 @@
     }
   } catch {}
 
-  // 0.2 反爬虫与受信任事件伪装（破解应届生网/自制日期控件与表单的 isTrusted 校验）
+  // 0.2 深度反爬指纹伪装与受信任事件（Stealth 2.0 抵御阿里/腾讯/51job WAF 风控）
   try {
-    Object.defineProperty(navigator, 'webdriver', {
-      get: () => undefined,
-      configurable: true
-    });
+    // 1. 严格在原型链上伪装 navigator.webdriver，确保 navigator.hasOwnProperty('webdriver') === false
+    try {
+      if (Object.prototype.hasOwnProperty.call(navigator, 'webdriver')) {
+        delete navigator.webdriver;
+      }
+    } catch (_) {}
+    try {
+      Object.defineProperty(Object.getPrototypeOf(navigator), 'webdriver', {
+        get: () => false,
+        enumerable: true,
+        configurable: true
+      });
+    } catch (_) {}
+
+    // 2. 伪装 Chrome 内部运行时属性 (window.chrome.app / csi / loadTimes)
+    if (typeof window !== 'undefined') {
+      if (!window.chrome) {
+        window.chrome = {};
+      }
+      if (!window.chrome.app) {
+        window.chrome.app = {
+          isInstalled: false,
+          InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+          RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+        };
+      }
+      if (!window.chrome.csi) {
+        window.chrome.csi = function () {
+          return { startE: Date.now(), onloadT: Date.now(), pageT: 100, tran: 15 };
+        };
+      }
+      if (!window.chrome.loadTimes) {
+        window.chrome.loadTimes = function () {
+          const nowSec = Date.now() / 1000;
+          return {
+            requestTime: nowSec - 0.5,
+            startLoadTime: nowSec - 0.45,
+            commitLoadTime: nowSec - 0.4,
+            finishDocumentLoadTime: nowSec - 0.1,
+            finishLoadTime: nowSec,
+            firstPaintTime: nowSec - 0.2,
+            firstPaintAfterLoadTime: 0,
+            navigationType: 'Other',
+            wasFetchedViaSpdy: true,
+            wasNpnNegotiated: true,
+            npnNegotiatedProtocol: 'h2',
+            wasAlternateProtocolAvailable: false,
+            connectionInfo: 'h2'
+          };
+        };
+      }
+    }
+
+    // 3. 补齐插件列表与语言标识，杜绝无头浏览器特征
+    try {
+      if (navigator.plugins && navigator.plugins.length === 0) {
+        Object.defineProperty(Object.getPrototypeOf(navigator), 'plugins', {
+          get: () => [1, 2, 3, 4, 5],
+          enumerable: true,
+          configurable: true
+        });
+      }
+    } catch (_) {}
+
+    // 4. 事件受信任 isTrusted 代理
     const origTrustedDesc = Object.getOwnPropertyDescriptor(Event.prototype, 'isTrusted');
     if (origTrustedDesc && origTrustedDesc.configurable) {
       Object.defineProperty(Event.prototype, 'isTrusted', {

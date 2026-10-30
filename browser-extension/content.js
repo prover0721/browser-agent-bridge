@@ -516,10 +516,14 @@
 
     const totalCount = dialogList.length + inViewportList.length + offscreenList.length;
 
+    const hasSlider = !!document.querySelector('.nc_iconfont, .btn_slide, .slider, div[role="slider"], .geetest_slider_button, .tcaptcha-transform') ||
+                      /滑动验证|访问验证|拖动到最右边|按住滑块/i.test(document.body ? (document.body.innerText || '') : '');
+
     const header = [
       `[Snapshot]: ${snapshotId}`,
       `[URL]: ${window.location.href}`,
       `[Title]: ${document.title}`,
+      ...(hasSlider ? ['[WARNING: SLIDER_VERIFICATION_DETECTED]: 检测到页面存在滑块验证码（如"请按住滑块，拖动到最右边"），请直接调用 browser_drag 工具自动滑过！'] : []),
       `[Scroll]: 垂直位置 ${scrollY}px (滚动进度约 ${scrollPercent}%)`,
       `[Elements]: ${activeDialog ? `弹窗内 ${dialogList.length} 个 / ` : ''}视口内 ${inViewportList.length} 个 / 全页共 ${totalCount} 个 (当前模式: ${viewportOnly ? '视口优先瘦身' : '全页完整模式'})`,
       '------------------------------------------------------------'
@@ -795,6 +799,115 @@
       };
     } catch (err) {
       return { success: false, error: `悬停失败: ${err.message}` };
+    }
+  }
+
+  /**
+   * 执行鼠标拖拽 (Drag) 操作（支持滑块验证码一键滑过）
+   */
+  function executeDrag(payload, expectedSnapshot) {
+    let el = null;
+    let id = payload?.element_id ?? (typeof payload === 'number' ? payload : payload?.id);
+    let selector = payload?.selector;
+
+    if (id !== undefined && id !== null) {
+      if (expectedSnapshot && expectedSnapshot !== snapshotId) {
+        return { success: false, error: '快照已过期，请重新获取' };
+      }
+      el = elementMap.get(Number(id));
+    } else if (selector) {
+      el = document.querySelector(selector);
+    }
+
+    if (!el) {
+      // 常见滑块选择器探测：阿里滑块 (.nc_iconfont, .btn_slide), 极验, 51job/通用滑块
+      const sliderSelectors = [
+        '.nc_iconfont', '.btn_slide', '.slider', 'div[role="slider"]',
+        '.geetest_slider_button', '.tcaptcha-transform', '.yidun_slider',
+        '.secsdk-captcha-drag-icon', 'span[class*="slider"]', 'div[class*="slider"]',
+        'div[class*="slide"]', 'div[class*="handler"]', 'div[class*="drag"]'
+      ];
+      for (const sel of sliderSelectors) {
+        const found = document.querySelector(sel);
+        if (found && (found.offsetWidth > 0 || found.getBoundingClientRect().width > 0)) {
+          el = found;
+          break;
+        }
+      }
+      if (!el) {
+        const allNodes = document.querySelectorAll('div, span, button');
+        for (const n of allNodes) {
+          const txt = (n.innerText || n.textContent || '').trim();
+          if ((txt === '>>' || txt === '>') && n.getBoundingClientRect().width > 15) {
+            el = n;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!el) {
+      return { success: false, error: '未找到可拖拽元素或滑块按钮，请提供 element_id 或 selector' };
+    }
+
+    const prevUrl = window.location.href;
+    const prevTitle = document.title;
+
+    try {
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      const rect = el.getBoundingClientRect();
+      const startX = rect.left + rect.width / 2;
+      const startY = rect.top + rect.height / 2;
+
+      // 自动计算轨道宽度
+      let trackWidth = 300;
+      let parent = el.parentElement;
+      for (let i = 0; i < 4 && parent; i++) {
+        const pRect = parent.getBoundingClientRect();
+        if (pRect.width > rect.width + 80) {
+          trackWidth = Math.round(pRect.width);
+          break;
+        }
+        parent = parent.parentElement;
+      }
+
+      const distanceX = Number(payload.distance_x) || Math.max(200, trackWidth - Math.round(rect.width));
+      const distanceY = Number(payload.distance_y) || 0;
+      const steps = Math.max(10, Math.min(60, Number(payload.steps) || 25));
+
+      const dispatch = (type, x, y, buttons = 1) => {
+        const evt = new MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: x,
+          clientY: y,
+          buttons
+        });
+        evt.__ba_trusted = true;
+        (type === 'mousemove' ? window : el).dispatchEvent(evt);
+      };
+
+      dispatch('mousedown', startX, startY, 1);
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const progress = 1 - Math.pow(1 - t, 3);
+        const curX = startX + distanceX * progress;
+        const curY = startY + distanceY * progress + (Math.random() - 0.5) * 2;
+        dispatch('mousemove', curX, curY, 1);
+      }
+      dispatch('mouseup', startX + distanceX, startY + distanceY, 0);
+
+      const feedback = collectActionFeedback(prevUrl, prevTitle);
+      return {
+        success: true,
+        message: `已执行拖拽 (${distanceX}px)`,
+        start: { x: Math.round(startX), y: Math.round(startY) },
+        end: { x: Math.round(startX + distanceX), y: Math.round(startY + distanceY) },
+        feedback
+      };
+    } catch (err) {
+      return { success: false, error: `拖拽失败: ${err.message}` };
     }
   }
 
@@ -1556,6 +1669,11 @@
         sendResponse(res);
         break;
       }
+      case 'DRAG': {
+        const res = executeDrag(payload || {}, payload?.snapshot_id);
+        sendResponse(res);
+        break;
+      }
       case 'GET_ELEMENT_BOUNDS': {
         let el = null;
         if (payload?.element_id !== undefined && payload?.element_id !== null) {
@@ -1571,11 +1689,46 @@
             }
           }
         }
+        if (!el && payload?.is_slider) {
+          const sliderSelectors = [
+            '.nc_iconfont', '.btn_slide', '.slider', 'div[role="slider"]',
+            '.geetest_slider_button', '.tcaptcha-transform', '.yidun_slider',
+            '.secsdk-captcha-drag-icon', 'span[class*="slider"]', 'div[class*="slider"]',
+            'div[class*="slide"]', 'div[class*="handler"]', 'div[class*="drag"]'
+          ];
+          for (const sel of sliderSelectors) {
+            const found = document.querySelector(sel);
+            if (found && (found.offsetWidth > 0 || found.getBoundingClientRect().width > 0)) {
+              el = found;
+              break;
+            }
+          }
+          if (!el) {
+            const allNodes = document.querySelectorAll('div, span, button');
+            for (const n of allNodes) {
+              const txt = (n.innerText || n.textContent || '').trim();
+              if ((txt === '>>' || txt === '>') && n.getBoundingClientRect().width > 15) {
+                el = n;
+                break;
+              }
+            }
+          }
+        }
         if (!el) {
           sendResponse({ success: false, error: '未找到指定元素' });
           break;
         }
         const rect = el.getBoundingClientRect();
+        let trackWidth = null;
+        let parent = el.parentElement;
+        for (let i = 0; i < 4 && parent; i++) {
+          const pRect = parent.getBoundingClientRect();
+          if (pRect.width > rect.width + 80) {
+            trackWidth = Math.round(pRect.width);
+            break;
+          }
+          parent = parent.parentElement;
+        }
         sendResponse({
           success: true,
           rect: {
@@ -1584,7 +1737,8 @@
             width: Math.round(rect.width),
             height: Math.round(rect.height),
             dpr: window.devicePixelRatio || 1
-          }
+          },
+          track_width: trackWidth
         });
         break;
       }

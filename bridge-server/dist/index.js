@@ -828,6 +828,44 @@ const TOOLS = [
             required: [],
         },
     },
+    {
+        name: 'browser_drag',
+        description: '【v2.0+ 拟人化拖拽与滑块验证一键过】模拟人手真实变速轨迹执行拖拽。专治各类站点（阿里WAF、51job、应届生网、极验、腾讯等）的滑动验证码（"请按住滑块，拖动到最右边"）或页面滑块拖动。支持自动探测页面滑块按钮与轨道宽度，借助 CDP 原生硬件级受信任输入（trusted: true）完美破解风控。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                element_id: {
+                    type: 'number',
+                    description: '可选：滑块按钮的编号（由 browser_snapshot 返回），不传则自动智能探测页面滑块元素',
+                },
+                selector: {
+                    type: 'string',
+                    description: '可选：滑块按钮的 CSS 选择器（如 ".nc_iconfont", ".btn_slide"）',
+                },
+                distance_x: {
+                    type: 'number',
+                    description: '可选：横向拖动像素距离（默认为 300，或自动计算轨道全长）',
+                },
+                distance_y: {
+                    type: 'number',
+                    description: '可选：纵向拖动距离（默认为 0）',
+                },
+                steps: {
+                    type: 'number',
+                    description: '可选：插值轨迹步数（默认为 30，步数越多轨迹越细腻）',
+                },
+                trusted: {
+                    type: 'boolean',
+                    description: '可选：是否使用 CDP 物理级真机受信任事件（isTrusted: true），默认为 true',
+                },
+                tab_id: {
+                    type: 'number',
+                    description: '可选：指定要在哪个标签页中执行拖拽',
+                },
+            },
+            required: [],
+        },
+    },
 ];
 // 注册工具列表处理器
 server.setRequestHandler(types_js_1.ListToolsRequestSchema, async () => {

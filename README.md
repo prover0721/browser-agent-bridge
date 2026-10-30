@@ -60,6 +60,7 @@
 | `browser_type` | **【v2.0+ 推荐】填写元素（支持受信任输入与只读控件解锁）**：支持 `trusted: true` 原生 CDP 键入、自动解锁自制日历等 readonly 输入框；自动回传动作反馈 |
 | `browser_hover` | **【v1.9.3+ 推荐】鼠标悬停/Hover**：精准悬停在卡片或元素上，唤醒 React/Vue 条件浮层按钮（如 BOSS直聘简历的「编辑」「添加」「同步」按钮） |
 | `browser_press` / `browser_scroll` | 派发键盘事件 / 滚动页面（附带滚动位置与进度百分比指示） |
+| `browser_drag` | **【v2.0+ 推荐】拟人化拖拽与滑块验证一键过**：模拟真实手部 Ease-Out 变速曲线与微抖动，专治阿里WAF/51job/应届生网/极验等滑动验证码（"请按住滑块，拖动到最右边"），自动计算轨道宽度并借助 CDP trusted 原生事件秒级滑过 |
 | `browser_screenshot` | **【v2.0+ 推荐】靶向视觉快照与局部裁切**：截取当前视口高清图像，支持指定 `element_id` 或 `selector` 裁切验证码、图表等关键元素，返回 base64 图像与绝对坐标 |
 | `browser_set_guard` | **【v2.0+ 推荐】AI 任务导航安全护栏**：设置当前任务允许访问的域名白名单（`domain_lock: ["*.zhipin.com", "yingjiesheng.com"]`），严密阻断非预期外链跳转与钓鱼网址 |
 | `browser_navigate` | 在指定或已绑定页面导航（后台自主导航零打扰，受安全护栏保护） |
@@ -81,6 +82,8 @@
 
 - **CDP 原生受信任输入与应届生求职网/复杂表单破解 (v2.0.0 重磅升级)**：
   - **CDP 原生硬件级受信任输入 (`trusted: true`)**：利用 `chrome.debugger` (Chrome DevTools Protocol) 派发底层的 `Input.dispatchMouseEvent`、`Input.dispatchKeyEvent` 和 `Input.insertText`。生成的事件对象原生自带 `event.isTrusted === true`，彻底攻克**应届生求职网（yingjiesheng）**教育经历在校时间等只认真实键鼠事件的自研/第三方日历与下拉控件。
+  - **拟人化物理拖拽与滑动验证码专解 (`browser_drag`)**：提供专治阿里 WAF、51job、极验等滑块验证码（“请按住滑块，拖动到最右边”）的物理拖拽工具，支持自动探测滑块按钮与轨道宽度，模拟三次贝塞尔变速与高斯手震，配合 CDP 原生受信任事件一键滑过。
+  - **深度反爬指纹伪装 (Stealth 2.0) 与 CDP 自动脱钩**：在 `Navigator.prototype` 上标准化伪装 `webdriver: false`（保证 `hasOwnProperty('webdriver') === false`），补全 Chrome 内部运行时属性（`chrome.csi`, `chrome.app`, `chrome.loadTimes`），CDP 键鼠操作完成后 600ms 自动脱钩，彻底隐匿自动化痕迹。
   - **自研日历控件只读解锁与主世界 isTrusted 增强**：针对前端日历控件给 `<input readonly>` 设置只读属性拦截键入的模式，在填表与输入前自动临时剥除只读限制并同步触发 `change` 与 `blur` 刷新；并在主世界对标记事件模拟 `isTrusted` 原型劫持，提供双重兜底保障。
   - **闭环动作即时反馈机制 (Action Feedback Loop)**：每次执行 `browser_click` 或 `browser_type` 后，系统自动扫描并返回当前界面的反馈状态（包含全局 Toast / 消息提示、表单红字校验错误、URL 是否发生变化等），使 AI 无需频繁调用完整快照即可感知“是否保存成功”或“漏填了哪一项”。
   - **靶向视觉快照与局部裁切 (`browser_screenshot`)**：支持对整个视口截屏，更支持指定 `element_id` 或 `selector` 对验证码、图表、二维码进行高精度像素级视口裁切，与视觉大模型无缝配合。
@@ -141,6 +144,6 @@ npm test
 npm audit
 ```
 
-全套 48 项测试覆盖 CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 50 项测试覆盖拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。

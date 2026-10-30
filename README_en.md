@@ -60,6 +60,7 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_type` | **【v2.0+ Recommended】Type Input (with Trusted CDP & Readonly Unlock)**: Types into target elements; supports `trusted: true` native CDP keystrokes, automatic readonly datepicker unlocking, and immediate action feedback |
 | `browser_hover` | **【v1.9.3+ Recommended】Mouse Hover Action**: Hovers over elements or cards to trigger React/Vue conditional hover buttons (e.g. BOSS Zhipin "Edit", "Add", "Sync") |
 | `browser_press` / `browser_scroll` | Dispatch keyboard keys / scroll page with pixel and percentage progression |
+| `browser_drag` | **【v2.0+ Recommended】Humanized Drag & Slider Captcha Bypass**: Simulates hand-drawn ease-out cubic speed curve and micro-jitter, specifically built to conquer Aliyun WAF, 51job, YingJieSheng, and Geetest slide verification ("请按住滑块，拖动到最右边") via CDP hardware-level trusted input |
 | `browser_screenshot` | **【v2.0+ Recommended】Targeted Visual Screenshot & Crop**: Captures viewport image, supporting targeted cropping of elements (CAPTCHAs, charts) by `element_id` or `selector` |
 | `browser_set_guard` | **【v2.0+ Recommended】Navigation Security Guardrail**: Enforces domain allowlists (`domain_lock: ["*.zhipin.com", "yingjiesheng.com"]`) to block unexpected navigation and phishing |
 | `browser_navigate` | Navigate current or designated tab to a target URL (protected by security guardrails) |
@@ -83,6 +84,8 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 
 - **CDP Native Trusted Input & Complex Form Bypass (v2.0.0 Milestone)**:
   - **CDP Native Hardware-Level Trusted Input (`trusted: true`)**: Harnesses `chrome.debugger` (Chrome DevTools Protocol) to dispatch low-level `Input.dispatchMouseEvent`, `Input.dispatchKeyEvent`, and `Input.insertText`. Generated events natively carry `event.isTrusted === true`, conquering restrictive datepickers and custom dropdowns on platforms like **YingJieSheng (应届生求职网)** and banking portals that reject synthetic scripts.
+  - **Humanized Physics Drag & Slide Captcha Solver (`browser_drag`)**: Specifically designed to conquer Aliyun WAF, 51job, and Geetest slide verification ("请按住滑块，拖动到最右边"). Automatically detects slider buttons and track widths, simulating cubic bezier speed curves and micro-jitters to pass verification instantly.
+  - **Stealth 2.0 Fingerprint Evasion & CDP Auto-Detach**: Properly defines `webdriver: false` on `Navigator.prototype` (ensuring `hasOwnProperty('webdriver') === false`), mocks internal Chrome runtime properties (`chrome.csi`, `chrome.app`, `chrome.loadTimes`), and automatically detaches the CDP debugger after 600ms of inactivity.
   - **Custom Datepicker Readonly Unlocking & Main-World Event Spoofing**: Automatically unsets temporary `readonly` flags on simulated calendar inputs before dispatching native input chains, accompanied by main-world prototype spoofing for `isTrusted` as a redundant fallback.
   - **Closed-Loop Action Feedback**: `browser_click` and `browser_type` automatically capture and return in-flight UI feedback (Toasts, floating notification badges, field-level validation errors, and URL redirection states), reducing redundant full-page snapshots.
   - **Targeted Visual Screenshot & Crop (`browser_screenshot`)**: High-fidelity viewport capture with element-level bounding box cropping (`element_id` or `selector`), feeding clean visual inputs directly to Multimodal LLMs.
@@ -207,7 +210,9 @@ Full suite of **42 automated end-to-end and unit tests** covering background vis
 ✔ browser_screenshot captures viewport and returns element rect
 ✔ browser_set_guard blocks navigation outside domain allowlist
 ✔ browser_click and browser_type with trusted: true dispatches via CDP debugger
-ℹ tests 48 | pass 48 | fail 0
+✔ browser_drag dispatches humanized CDP drag events for slider verification
+✔ content script detects slider verification and executes drag
+ℹ tests 50 | pass 50 | fail 0
 ```
 
 ## License

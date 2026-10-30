@@ -779,3 +779,31 @@ test('browser_click and browser_type with trusted: true dispatches via CDP debug
   assert.ok(cdpInsert);
   assert.equal(cdpInsert.params.text, '2023-09');
 });
+
+test('browser_drag dispatches humanized CDP drag events for slider verification', async () => {
+  const page = background();
+  const dragRes = await page.call('browser_drag', { tab_id: 1, element_id: 1, distance_x: 280, trusted: true });
+  assert.equal(dragRes.result.success, true);
+  assert.equal(dragRes.result.trusted, true);
+  assert.equal(dragRes.result.distance_x, 280);
+
+  const mousePressed = page.cdpCalls.find((c: any) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mousePressed');
+  assert.ok(mousePressed);
+  assert.equal(mousePressed.params.buttons, 1);
+
+  const mouseMoves = page.cdpCalls.filter((c: any) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mouseMoved');
+  assert.ok(mouseMoves.length >= 10);
+
+  const mouseReleased = page.cdpCalls.find((c: any) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mouseReleased');
+  assert.ok(mouseReleased);
+});
+
+test('content script detects slider verification and executes drag', () => {
+  const page = content('<div class="nc_wrapper"><div class="nc_iconfont btn_slide" style="width:40px;height:40px;">&gt;&gt;</div></div>');
+  const snapRes = page.call('SNAPSHOT');
+  assert.match(snapRes.data, /SLIDER_VERIFICATION_DETECTED/);
+
+  const dragRes = page.call('DRAG', { distance_x: 280 });
+  assert.equal(dragRes.success, true);
+  assert.match(dragRes.message, /280px/);
+});

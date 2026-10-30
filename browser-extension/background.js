@@ -13,9 +13,32 @@ let boundTabId = null;   // 锁定的专属后台工作 Tab ID
 let aiWindowId = null;   // AI 专属独立工作窗口 ID（与用户主窗口彻底物理隔离）
 let domainLock = null;   // 任务安全护栏域名白名单
 const attachedDebuggers = new Set();
+const cdpDetachTimers = new Map();
 
-// ── CDP Debugger 物理级真机受信任输入模拟（isTrusted === true） ──
+// ── CDP Debugger 智能脱钩与物理级真机受信任输入模拟（isTrusted === true） ──
+function scheduleCdpDetach(tabId) {
+  if (cdpDetachTimers.has(tabId)) {
+    clearTimeout(cdpDetachTimers.get(tabId));
+  }
+  const timer = setTimeout(async () => {
+    cdpDetachTimers.delete(tabId);
+    if (attachedDebuggers.has(tabId)) {
+      try {
+        if (chrome.debugger && chrome.debugger.detach) {
+          await chrome.debugger.detach({ tabId });
+        }
+      } catch (_) {}
+      attachedDebuggers.delete(tabId);
+    }
+  }, 600);
+  cdpDetachTimers.set(tabId, timer);
+}
+
 async function attachCdp(tabId) {
+  if (cdpDetachTimers.has(tabId)) {
+    clearTimeout(cdpDetachTimers.get(tabId));
+    cdpDetachTimers.delete(tabId);
+  }
   if (attachedDebuggers.has(tabId)) return;
   if (!chrome.debugger) return;
   try {
@@ -50,12 +73,72 @@ async function cdpDispatchClick(tabId, x, y) {
     y: Math.round(y),
     clickCount: 1
   });
+  scheduleCdpDetach(tabId);
 }
 
 async function cdpDispatchInsertText(tabId, text) {
   if (!chrome.debugger) return;
   await attachCdp(tabId);
   await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text });
+  scheduleCdpDetach(tabId);
+}
+
+async function cdpDispatchDrag(tabId, startX, startY, endX, endY, steps = 30) {
+  if (!chrome.debugger) return;
+  await attachCdp(tabId);
+  // 1. 移动到起点
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: Math.round(startX),
+    y: Math.round(startY)
+  });
+  await new Promise(r => setTimeout(r, 40));
+
+  // 2. 按下左键
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    button: 'left',
+    buttons: 1,
+    x: Math.round(startX),
+    y: Math.round(startY),
+    clickCount: 1
+  });
+  await new Promise(r => setTimeout(r, 30));
+
+  // 3. 拟人化 Ease-Out 三次贝塞尔曲线与高斯手震扰动
+  const numSteps = Math.max(10, Math.min(60, steps));
+  for (let i = 1; i <= numSteps; i++) {
+    const t = i / numSteps;
+    const progress = 1 - Math.pow(1 - t, 3);
+    const curX = startX + (endX - startX) * progress;
+    // Y 轴拟人化随机手震 (-1.5px ~ +1.5px)
+    const jitterY = (Math.random() - 0.5) * 3;
+    const curY = startY + (endY - startY) * progress + jitterY;
+
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      button: 'left',
+      buttons: 1,
+      x: Math.round(curX),
+      y: Math.round(curY)
+    });
+    await new Promise(r => setTimeout(r, 8 + Math.floor(Math.random() * 12)));
+  }
+
+  // 4. 滑块终点轻微悬停停顿
+  await new Promise(r => setTimeout(r, 80 + Math.floor(Math.random() * 40)));
+
+  // 5. 释放左键
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    button: 'left',
+    buttons: 0,
+    x: Math.round(endX),
+    y: Math.round(endY),
+    clickCount: 1
+  });
+
+  scheduleCdpDetach(tabId);
 }
 
 // 从 storage 加载配置端口
@@ -999,7 +1082,7 @@ async function handleBridgeCommand(method, params) {
   }
 
   // ── 2. 页面级信息与跳转命令 ──
-  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_hover', 'browser_press', 'browser_scroll', 'browser_upload_file', 'browser_fill_form', 'browser_insert_text'];
+  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_hover', 'browser_press', 'browser_scroll', 'browser_upload_file', 'browser_fill_form', 'browser_insert_text', 'browser_drag'];
   if (mutations.includes(method) && !params.tab_id && !boundTabId) return { error: '修改页面前请指定 tab_id 或绑定标签页' };
   const targetTab = await resolveTargetTab(params.tab_id);
   if (!targetTab || !targetTab.id) {
@@ -1087,6 +1170,49 @@ async function handleBridgeCommand(method, params) {
           selector: params.selector,
           snapshot_id: params.snapshot_id,
           humanlike: params.humanlike !== false
+        };
+        break;
+      case 'browser_drag':
+        if (params.trusted !== false) {
+          await ensureContentScriptInjected(targetTab.id);
+          const bounds = await chrome.tabs.sendMessage(targetTab.id, {
+            action: 'GET_ELEMENT_BOUNDS',
+            payload: { element_id: params.element_id, selector: params.selector, text: params.text, is_slider: true }
+          });
+          if (bounds?.success && bounds.rect) {
+            const startX = bounds.rect.left + bounds.rect.width / 2;
+            const startY = bounds.rect.top + bounds.rect.height / 2;
+            const distanceX = Number(params.distance_x) || (bounds.track_width ? Math.max(200, bounds.track_width - bounds.rect.width) : 300);
+            const distanceY = Number(params.distance_y) || 0;
+            const endX = startX + distanceX;
+            const endY = startY + distanceY;
+            const steps = Number(params.steps) || 30;
+
+            await cdpDispatchDrag(targetTab.id, startX, startY, endX, endY, steps);
+            await new Promise(r => setTimeout(r, 600));
+            const fbRes = await chrome.tabs.sendMessage(targetTab.id, { action: 'GET_FEEDBACK' }).catch(() => null);
+
+            return {
+              result: {
+                success: true,
+                trusted: true,
+                start: { x: Math.round(startX), y: Math.round(startY) },
+                end: { x: Math.round(endX), y: Math.round(endY) },
+                distance_x: distanceX,
+                distance_y: distanceY,
+                message: `已通过 CDP 物理级真机模拟完成平滑拖拽/滑块验证 (从 x:${Math.round(startX)} 拖动至 x:${Math.round(endX)})`,
+                feedback: fbRes?.feedback
+              }
+            };
+          }
+        }
+        action = 'DRAG';
+        payload = {
+          element_id: params.element_id,
+          selector: params.selector,
+          distance_x: params.distance_x || 300,
+          distance_y: params.distance_y || 0,
+          steps: params.steps || 25
         };
         break;
       case 'browser_hover':
