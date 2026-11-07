@@ -866,6 +866,24 @@ const TOOLS = [
             required: [],
         },
     },
+    {
+        name: 'browser_keep_alive',
+        description: '【v2.1 后台防休眠保活】锁定指定标签页（或当前受控页）在后台永不休眠、永不冻结。专治 Edge/Chrome 睡眠标签页（Sleeping Tabs）机制导致的后台 JavaScript 停止执行、WebSocket 断开（如嘉立创EDA报 "StatusGoingAway: stale connector session"）或 WebGL 画布冻结。激活 CDP 调试通道常驻免休眠、循环无声媒体流、屏幕唤醒锁（WakeLock）与高频守护心跳。',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                enabled: {
+                    type: 'boolean',
+                    description: '是否开启后台防休眠保活，默认为 true（传 false 为关闭并释放保活资源）',
+                },
+                tab_id: {
+                    type: 'number',
+                    description: '可选：指定要保活的目标标签页 ID，不传则保活当前受控/绑定的标签页',
+                },
+            },
+            required: [],
+        },
+    },
 ];
 // 注册工具列表处理器
 server.setRequestHandler(types_js_1.ListToolsRequestSchema, async () => {
@@ -977,7 +995,7 @@ async function main() {
     process.once('SIGTERM', () => { bridge.close(); process.exit(0); });
     const transport = new stdio_js_1.StdioServerTransport();
     await server.connect(transport);
-    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v2.0.0 CDP Trusted Input, Vision & Feedback Loop) started successfully over stdio.');
+    console.error('[MCP-Server] Browser Agent MCP Bridge Server (v2.1.0 Anti-Sleeping Keep-Alive, CDP Immunity & Drag) started successfully over stdio.');
 }
 main().catch((err) => {
     console.error('[MCP-Server] Fatal startup error:', err);

@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -61,6 +61,7 @@
 | `browser_hover` | **【v1.9.3+ 推荐】鼠标悬停/Hover**：精准悬停在卡片或元素上，唤醒 React/Vue 条件浮层按钮（如 BOSS直聘简历的「编辑」「添加」「同步」按钮） |
 | `browser_press` / `browser_scroll` | 派发键盘事件 / 滚动页面（附带滚动位置与进度百分比指示） |
 | `browser_drag` | **【v2.0+ 推荐】拟人化拖拽与滑块验证一键过**：模拟真实手部 Ease-Out 变速曲线与微抖动，专治阿里WAF/51job/应届生网/极验等滑动验证码（"请按住滑块，拖动到最右边"），自动计算轨道宽度并借助 CDP trusted 原生事件秒级滑过 |
+| `browser_keep_alive` | **【v2.1+ 推荐】后台防休眠持久保活**：锁定指定页面在后台永不休眠、永不冻结。专治 Edge/Chrome 睡眠标签页（Sleeping Tabs）机制导致的后台 JS 停摆、WebSocket 掉线（如嘉立创EDA画板断开 `stale connector session`）与 WebGL 冻结；集成 CDP 协议免疫、无声媒体流与屏幕唤醒锁（WakeLock） |
 | `browser_screenshot` | **【v2.0+ 推荐】靶向视觉快照与局部裁切**：截取当前视口高清图像，支持指定 `element_id` 或 `selector` 裁切验证码、图表等关键元素，返回 base64 图像与绝对坐标 |
 | `browser_set_guard` | **【v2.0+ 推荐】AI 任务导航安全护栏**：设置当前任务允许访问的域名白名单（`domain_lock: ["*.zhipin.com", "yingjiesheng.com"]`），严密阻断非预期外链跳转与钓鱼网址 |
 | `browser_navigate` | 在指定或已绑定页面导航（后台自主导航零打扰，受安全护栏保护） |
@@ -80,6 +81,11 @@
 | `browser_go_back` / `browser_go_forward` / `browser_reload` | **【v1.9+ 推荐】基础导航控制**：控制当前受控标签页后退、前进或硬刷新 |
 | `browser_reload_extension` | **【v1.9.2+ 推荐】一键/自动热重载扩展**：执行 `chrome.runtime.reload()` 秒级重载扩展并同步刷新受控网页，免去手动前往 `chrome://extensions` 页面刷新的繁琐步骤 |
 
+- **四维立体后台防休眠保活 (v2.1.0 新增，专治嘉立创EDA与重度自动化任务)**：
+  - **CDP 协议级免休眠锁定 (CDP Immunity Pinning)**：根据 Chromium/Edge 内核调度规范，凡挂载了自动化调试器（`chrome.debugger`）的标签页绝对豁免休眠。开启保活后常驻轻量 CDP 会话并调用 `Page.enable`，彻底杜绝 Edge 睡眠标签页（Sleeping Tabs）机制将后台网页置于挂起状态。
+  - **物理循环媒体流与屏幕唤醒锁 (Audio Loop & WakeLock)**：向受控页面自动注入低功耗循环无声音频（满足 Edge 媒体播放免休眠硬性条件），配合 W3C `navigator.wakeLock.request('screen')` 阻断屏幕息屏与 WebGL/Canvas 画布渲染降频。
+  - **守护心跳与系统休眠阻断 (`chrome.power`)**：Background 服务端每 3 秒向目标页面投递守护心跳，激活事件循环；申请 `power` 权限在长任务画板期间阻止操作系统睡眠。
+  - **自动化联动与显式控制 (`browser_keep_alive`)**：Agent 绑定标签页（`browser_bind_tab`）时自动激活保活；亦可通过 `browser_keep_alive({ enabled: true })` 手动锁定，并在扩展侧边栏提供直观的「🛡️ 防休眠保活」切换开关。
 - **CDP 原生受信任输入与应届生求职网/复杂表单破解 (v2.0.0 重磅升级)**：
   - **CDP 原生硬件级受信任输入 (`trusted: true`)**：利用 `chrome.debugger` (Chrome DevTools Protocol) 派发底层的 `Input.dispatchMouseEvent`、`Input.dispatchKeyEvent` 和 `Input.insertText`。生成的事件对象原生自带 `event.isTrusted === true`，彻底攻克**应届生求职网（yingjiesheng）**教育经历在校时间等只认真实键鼠事件的自研/第三方日历与下拉控件。
   - **拟人化物理拖拽与滑动验证码专解 (`browser_drag`)**：提供专治阿里 WAF、51job、极验等滑块验证码（“请按住滑块，拖动到最右边”）的物理拖拽工具，支持自动探测滑块按钮与轨道宽度，模拟三次贝塞尔变速与高斯手震，配合 CDP 原生受信任事件一键滑过。
@@ -144,6 +150,6 @@ npm test
 npm audit
 ```
 
-全套 50 项测试覆盖拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 53 项测试覆盖后台防休眠持久保活（CDP 免疫/无声媒体流/唤醒锁/守护心跳）、拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。

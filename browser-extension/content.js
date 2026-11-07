@@ -1521,6 +1521,50 @@
     };
   }
 
+  // ── 深度防休眠与媒体/WakeLock 保活机制（专为嘉立创EDA等重度后台自动化任务设计） ──
+  let silentAudioEl = null;
+  let wakeLockObj = null;
+
+  async function enableKeepAlive() {
+    // 1. 请求屏幕唤醒锁（防止系统休眠与渲染管线被挂起）
+    try {
+      if ('wakeLock' in navigator && !wakeLockObj) {
+        wakeLockObj = await navigator.wakeLock.request('screen');
+        wakeLockObj.addEventListener('release', () => { wakeLockObj = null; });
+      }
+    } catch (_) {}
+
+    // 2. 注入循环无声音频（Edge/Chrome 内核检测到活跃音频播放时绝对豁免休眠）
+    try {
+      if (!silentAudioEl && typeof document !== 'undefined' && document.createElement) {
+        silentAudioEl = document.createElement('audio');
+        silentAudioEl.id = '__ba_keepalive_audio__';
+        silentAudioEl.loop = true;
+        silentAudioEl.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+        silentAudioEl.volume = 0.001;
+        (document.body || document.documentElement).appendChild(silentAudioEl);
+        try {
+          const p = silentAudioEl.play();
+          if (p && typeof p.catch === 'function') p.catch(() => {});
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  function disableKeepAlive() {
+    if (wakeLockObj) {
+      try { wakeLockObj.release(); } catch (_) {}
+      wakeLockObj = null;
+    }
+    if (silentAudioEl) {
+      try {
+        silentAudioEl.pause();
+        silentAudioEl.remove();
+      } catch (_) {}
+      silentAudioEl = null;
+    }
+  }
+
   // 划选监听，自动通知 background/sidepanel
   document.addEventListener('selectionchange', () => {
     const sel = window.getSelection()?.toString().trim();
@@ -1744,6 +1788,26 @@
       }
       case 'GET_FEEDBACK': {
         sendResponse({ success: true, feedback: collectActionFeedback(window.location.href, document.title) });
+        break;
+      }
+      case 'ENABLE_KEEP_ALIVE': {
+        enableKeepAlive().catch(() => {});
+        sendResponse({ success: true, message: '页面防休眠保活已成功激活' });
+        break;
+      }
+      case 'DISABLE_KEEP_ALIVE': {
+        disableKeepAlive();
+        sendResponse({ success: true, message: '页面防休眠保活已关闭' });
+        break;
+      }
+      case 'KEEP_ALIVE_PING': {
+        if (silentAudioEl && silentAudioEl.paused) {
+          try {
+            const p = silentAudioEl.play();
+            if (p && typeof p.catch === 'function') p.catch(() => {});
+          } catch (_) {}
+        }
+        sendResponse({ success: true, timestamp: Date.now() });
         break;
       }
       default:

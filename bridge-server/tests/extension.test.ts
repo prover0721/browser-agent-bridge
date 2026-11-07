@@ -119,6 +119,7 @@ function background() {
       remove: async (id: number) => { windows.delete(id); for (const tab of tabs.values()) if (tab.windowId === id) tabs.delete(tab.id); },
       onRemoved: event()
     }, action: { onClicked: event() }, runtime: { reload: () => {}, sendMessage: () => Promise.resolve(), onMessage: { addListener(fn: any) { runtimeListener = fn; } } },
+    power: { requestKeepAwake: () => {}, releaseKeepAwake: () => {} },
     bookmarks: {
       getTree: async () => [
         {
@@ -806,4 +807,46 @@ test('content script detects slider verification and executes drag', () => {
   const dragRes = page.call('DRAG', { distance_x: 280 });
   assert.equal(dragRes.success, true);
   assert.match(dragRes.message, /280px/);
+});
+
+test('browser_keep_alive activates CDP immunity, WakeLock, and media keepalive', async () => {
+  const page = background();
+  const enableRes = await page.call('browser_keep_alive', { tab_id: 1, enabled: true });
+  assert.equal(enableRes.result.keep_alive, true);
+  assert.equal(enableRes.result.tab_id, 1);
+
+  const cdpPageEnable = page.cdpCalls.find((c: any) => c.method === 'Page.enable');
+  assert.ok(cdpPageEnable);
+
+  const enableMsg = page.domCalls.find((c: any) => c.action === 'ENABLE_KEEP_ALIVE');
+  assert.ok(enableMsg);
+
+  const disableRes = await page.call('browser_keep_alive', { tab_id: 1, enabled: false });
+  assert.equal(disableRes.result.keep_alive, false);
+
+  const disableMsg = page.domCalls.find((c: any) => c.action === 'DISABLE_KEEP_ALIVE');
+  assert.ok(disableMsg);
+});
+
+test('browser_bind_tab automatically activates background keep_alive', async () => {
+  const page = background();
+  const bindRes = await page.call('browser_bind_tab', { tab_id: 1 });
+  assert.equal(bindRes.result.bound_tab_id, 1);
+  assert.equal(bindRes.result.keep_alive, true);
+
+  const enableMsg = page.domCalls.find((c: any) => c.action === 'ENABLE_KEEP_ALIVE');
+  assert.ok(enableMsg);
+});
+
+test('content script handles ENABLE_KEEP_ALIVE and KEEP_ALIVE_PING', () => {
+  const page = content('<div id="easyeda-canvas">EasyEDA</div>');
+  const enableRes = page.call('ENABLE_KEEP_ALIVE');
+  assert.equal(enableRes.success, true);
+
+  const pingRes = page.call('KEEP_ALIVE_PING');
+  assert.equal(pingRes.success, true);
+  assert.ok(pingRes.timestamp);
+
+  const disableRes = page.call('DISABLE_KEEP_ALIVE');
+  assert.equal(disableRes.success, true);
 });

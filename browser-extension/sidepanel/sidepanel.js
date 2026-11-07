@@ -15,10 +15,27 @@ document.addEventListener('DOMContentLoaded', () => {
   const snapshotModal = document.getElementById('snapshotModal');
   const btnCloseModal = document.getElementById('btnCloseModal');
   const snapshotContent = document.getElementById('snapshotContent');
+  const btnToggleKeepAlive = document.getElementById('btnToggleKeepAlive');
 
   let currentSelectedText = '';
   let isCurrentlyBound = false;
   let isAiWindow = false;
+  let isKeepAliveActive = false;
+
+  function updateKeepAliveState(active) {
+    isKeepAliveActive = !!active;
+    if (btnToggleKeepAlive) {
+      if (isKeepAliveActive) {
+        btnToggleKeepAlive.textContent = '🛡️ 防休眠保活: 开启';
+        btnToggleKeepAlive.style.borderColor = '#10b981';
+        btnToggleKeepAlive.style.color = '#10b981';
+      } else {
+        btnToggleKeepAlive.textContent = '🛡️ 防休眠保活: 关闭';
+        btnToggleKeepAlive.style.borderColor = '';
+        btnToggleKeepAlive.style.color = '';
+      }
+    }
+  }
 
   // 更新连接状态徽标
   function updateStatus(status, port) {
@@ -78,6 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (res.status) updateStatus(res.status, res.port);
     if (res.tab) updateTabInfo(res.tab, res.boundTabId);
     updateLockState(!!res.boundTabId);
+    if (res.isKeepAlive !== undefined) updateKeepAliveState(res.isKeepAlive);
     if (res.selection) {
       currentSelectedText = res.selection;
       selectionText.textContent = res.selection;
@@ -90,6 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
       updateStatus(msg.status, msg.port);
     } else if (msg.type === 'TAB_INFO') {
       updateTabInfo(msg.tab, msg.boundTabId);
+      if (msg.isKeepAlive !== undefined) updateKeepAliveState(msg.isKeepAlive);
     } else if (msg.type === 'TAB_LOCK_CHANGED') {
       updateLockState(!!msg.boundTabId);
     } else if (msg.type === 'SELECTION_CHANGED') {
@@ -108,6 +127,17 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   });
+
+  // 切换后台防休眠保活按钮
+  if (btnToggleKeepAlive) {
+    btnToggleKeepAlive.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ type: 'TOGGLE_KEEP_ALIVE' }, (res) => {
+        if (res && res.success) {
+          updateKeepAliveState(res.keep_alive);
+        }
+      });
+    });
+  }
 
   // 重连按钮
   btnReconnect.addEventListener('click', () => {

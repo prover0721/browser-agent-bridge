@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -61,6 +61,7 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_hover` | **【v1.9.3+ Recommended】Mouse Hover Action**: Hovers over elements or cards to trigger React/Vue conditional hover buttons (e.g. BOSS Zhipin "Edit", "Add", "Sync") |
 | `browser_press` / `browser_scroll` | Dispatch keyboard keys / scroll page with pixel and percentage progression |
 | `browser_drag` | **【v2.0+ Recommended】Humanized Drag & Slider Captcha Bypass**: Simulates hand-drawn ease-out cubic speed curve and micro-jitter, specifically built to conquer Aliyun WAF, 51job, YingJieSheng, and Geetest slide verification ("请按住滑块，拖动到最右边") via CDP hardware-level trusted input |
+| `browser_keep_alive` | **【v2.1+ Recommended】Anti-Sleeping Background Keep-Alive**: Prevents designated tabs from sleeping or freezing in the background. Specifically designed to solve Edge/Chrome Sleeping Tabs terminating background JS runtimes, dropping WebSockets (e.g. EasyEDA PCB canvas "stale connector session"), or halting WebGL pipelines; combines CDP immunity pinning, silent media playback loops, and WakeLock |
 | `browser_screenshot` | **【v2.0+ Recommended】Targeted Visual Screenshot & Crop**: Captures viewport image, supporting targeted cropping of elements (CAPTCHAs, charts) by `element_id` or `selector` |
 | `browser_set_guard` | **【v2.0+ Recommended】Navigation Security Guardrail**: Enforces domain allowlists (`domain_lock: ["*.zhipin.com", "yingjiesheng.com"]`) to block unexpected navigation and phishing |
 | `browser_navigate` | Navigate current or designated tab to a target URL (protected by security guardrails) |
@@ -81,6 +82,12 @@ Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to you
 | `browser_reload_extension` | **【v1.9.2+ Recommended】Auto / Hot Reload Extension**: Executes `chrome.runtime.reload()` and synchronizes active page reload, bypassing manual `chrome://extensions` visits |
 
 ## Key Architectural Advantages
+
+- **Four-Tier Anti-Sleeping Background Keep-Alive (v2.1.0 New, Tailored for EasyEDA PCB & Heavy Automation)**:
+  - **CDP Protocol Immunity Pinning**: Chromium/Edge kernel specifications mandate that any tab with a debugger attached (`chrome.debugger`) is strictly exempt from Sleeping Tabs and process suspension. Enabling keep-alive maintains a lightweight CDP session with `Page.enable`, guaranteeing that background JavaScript runtimes, WebSocket connections, and WebGL rendering contexts never freeze.
+  - **Silent Audio Playback Loop & Screen WakeLock**: Automatically injects a silent looping audio stream into the target page (satisfying the browser's audio playback exemption) and requests a W3C `navigator.wakeLock.request('screen')` to prevent display dimming and canvas throttling.
+  - **Service Worker Guardian Heartbeat & OS Sleep Prevention (`chrome.power`)**: The Background Service Worker delivers active heartbeats every 3 seconds to keep event loops warm and uses `chrome.power.requestKeepAwake('display')` to prevent the operating system from sleeping during long PCB design runs.
+  - **Auto-Activation & UI Toggle (`browser_keep_alive`)**: Automatically activates whenever an Agent binds a tab (`browser_bind_tab`) or manually calls `browser_keep_alive({ enabled: true })`. Also provides an interactive "🛡️ 防休眠保活" button directly in the extension's side panel dashboard.
 
 - **CDP Native Trusted Input & Complex Form Bypass (v2.0.0 Milestone)**:
   - **CDP Native Hardware-Level Trusted Input (`trusted: true`)**: Harnesses `chrome.debugger` (Chrome DevTools Protocol) to dispatch low-level `Input.dispatchMouseEvent`, `Input.dispatchKeyEvent`, and `Input.insertText`. Generated events natively carry `event.isTrusted === true`, conquering restrictive datepickers and custom dropdowns on platforms like **YingJieSheng (应届生求职网)** and banking portals that reject synthetic scripts.
@@ -212,7 +219,10 @@ Full suite of **42 automated end-to-end and unit tests** covering background vis
 ✔ browser_click and browser_type with trusted: true dispatches via CDP debugger
 ✔ browser_drag dispatches humanized CDP drag events for slider verification
 ✔ content script detects slider verification and executes drag
-ℹ tests 50 | pass 50 | fail 0
+✔ browser_keep_alive activates CDP immunity, WakeLock, and media keepalive
+✔ browser_bind_tab automatically activates background keep_alive
+✔ content script handles ENABLE_KEEP_ALIVE and KEEP_ALIVE_PING
+ℹ tests 53 | pass 53 | fail 0
 ```
 
 ## License

@@ -56,12 +56,18 @@
         e.stopImmediatePropagation();
       }
     }, true);
+    window.addEventListener('freeze', (e) => {
+      e.stopImmediatePropagation();
+    }, true);
+    document.addEventListener('freeze', (e) => {
+      e.stopImmediatePropagation();
+    }, true);
 
-    // 建立后台轻量无声 AudioContext 保活（彻底破除 Chromium 内核级 0 FPS 冻结与 Timer Alignment 降频）
+    // 建立后台无声音频与媒体保活（解除 Chromium/Edge 后台休眠冻结与定时器降频）
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (AudioCtx) {
       let silentCtx = null;
-      window.addEventListener('DOMContentLoaded', () => {
+      const startAudio = () => {
         try {
           if (!silentCtx) {
             silentCtx = new AudioCtx();
@@ -72,8 +78,14 @@
             gain.connect(silentCtx.destination);
             osc.start();
           }
+          if (silentCtx && silentCtx.state === 'suspended') {
+            silentCtx.resume().catch(() => {});
+          }
         } catch {}
-      }, { once: true });
+      };
+      window.addEventListener('DOMContentLoaded', startAudio, { once: true });
+      window.addEventListener('click', startAudio, { once: true, capture: true });
+      window.addEventListener('keydown', startAudio, { once: true, capture: true });
     }
   } catch {}
 

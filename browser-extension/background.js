@@ -14,14 +14,20 @@ let aiWindowId = null;   // AI 专属独立工作窗口 ID（与用户主窗口�
 let domainLock = null;   // 任务安全护栏域名白名单
 const attachedDebuggers = new Set();
 const cdpDetachTimers = new Map();
+const keepAliveTabs = new Set();
+let keepAliveTimer = null;
 
 // ── CDP Debugger 智能脱钩与物理级真机受信任输入模拟（isTrusted === true） ──
 function scheduleCdpDetach(tabId) {
+  // 若当前标签页处于后台保活模式，绝对不脱钩，永久阻断 Edge Sleeping Tabs 冻结
+  if (keepAliveTabs.has(tabId)) return;
+
   if (cdpDetachTimers.has(tabId)) {
     clearTimeout(cdpDetachTimers.get(tabId));
   }
   const timer = setTimeout(async () => {
     cdpDetachTimers.delete(tabId);
+    if (keepAliveTabs.has(tabId)) return;
     if (attachedDebuggers.has(tabId)) {
       try {
         if (chrome.debugger && chrome.debugger.detach) {
@@ -32,6 +38,82 @@ function scheduleCdpDetach(tabId) {
     }
   }, 600);
   cdpDetachTimers.set(tabId, timer);
+}
+
+// ── 深度后台防休眠保活机制（专治 Edge Sleeping Tabs 与嘉立创EDA/重任务冻结） ──
+async function setTabKeepAlive(tabId, enabled = true) {
+  if (enabled) {
+    keepAliveTabs.add(tabId);
+
+    // 1. 永久锁定 CDP Debugger（Edge / Chrome 规范：挂载调试器的标签页绝对免除休眠冻结）
+    try {
+      await attachCdp(tabId);
+      if (chrome.debugger && chrome.debugger.sendCommand) {
+        await chrome.debugger.sendCommand({ tabId }, 'Page.enable').catch(() => {});
+      }
+    } catch (_) {}
+
+    // 2. 阻止系统级息屏/休眠
+    try {
+      if (chrome.power && chrome.power.requestKeepAwake) {
+        chrome.power.requestKeepAwake('display');
+      }
+    } catch (_) {}
+
+    // 3. 通知页面注入无声媒体流和 WakeLock
+    try {
+      await ensureContentScriptInjected(tabId);
+      await chrome.tabs.sendMessage(tabId, { action: 'ENABLE_KEEP_ALIVE' });
+    } catch (_) {}
+
+    startKeepAliveHeartbeat();
+  } else {
+    keepAliveTabs.delete(tabId);
+    try {
+      await chrome.tabs.sendMessage(tabId, { action: 'DISABLE_KEEP_ALIVE' }).catch(() => {});
+    } catch (_) {}
+
+    if (attachedDebuggers.has(tabId)) {
+      scheduleCdpDetach(tabId);
+    }
+    if (keepAliveTabs.size === 0) {
+      stopKeepAliveHeartbeat();
+      try {
+        if (chrome.power && chrome.power.releaseKeepAwake) {
+          chrome.power.releaseKeepAwake();
+        }
+      } catch (_) {}
+    }
+  }
+  broadcastActiveTabInfo();
+  return { success: true, tab_id: tabId, keep_alive: enabled };
+}
+
+function startKeepAliveHeartbeat() {
+  if (keepAliveTimer) return;
+  keepAliveTimer = setInterval(async () => {
+    if (keepAliveTabs.size === 0) {
+      stopKeepAliveHeartbeat();
+      return;
+    }
+    for (const tid of Array.from(keepAliveTabs)) {
+      try {
+        await chrome.tabs.sendMessage(tid, { action: 'KEEP_ALIVE_PING' });
+      } catch (_) {
+        const exists = await chrome.tabs.get(tid).catch(() => null);
+        if (!exists) {
+          keepAliveTabs.delete(tid);
+        }
+      }
+    }
+  }, 3000);
+}
+
+function stopKeepAliveHeartbeat() {
+  if (keepAliveTimer) {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = null;
+  }
 }
 
 async function attachCdp(tabId) {
@@ -554,6 +636,9 @@ async function handleBridgeCommand(method, params) {
     try {
       const tab = await chrome.tabs.get(params.tab_id);
       boundTabId = tab.id;
+      if (params.keep_alive !== false) {
+        await setTabKeepAlive(tab.id, true).catch(() => {});
+      }
       notifySidePanel({ type: 'TAB_LOCK_CHANGED', boundTabId: tab.id });
       broadcastActiveTabInfo();
       return {
@@ -561,7 +646,8 @@ async function handleBridgeCommand(method, params) {
           bound_tab_id: tab.id,
           title: tab.title,
           url: tab.url,
-          message: `已成功锁定标签页 [ID: ${tab.id}] "${tab.title}"。后续操作将在该后台页面持续执行。`
+          keep_alive: keepAliveTabs.has(tab.id),
+          message: `已成功锁定标签页 [ID: ${tab.id}] "${tab.title}"并激活后台防休眠保活。后续操作将在该后台页面持续执行。`
         }
       };
     } catch (e) {
@@ -572,11 +658,14 @@ async function handleBridgeCommand(method, params) {
   if (method === 'browser_unbind_tab') {
     const oldId = boundTabId;
     boundTabId = null;
+    if (oldId && keepAliveTabs.has(oldId)) {
+      await setTabKeepAlive(oldId, false).catch(() => {});
+    }
     notifySidePanel({ type: 'TAB_LOCK_CHANGED', boundTabId: null });
     broadcastActiveTabInfo();
     return {
       result: {
-        message: `已解除标签页锁定 (原 ID: ${oldId})。现在已恢复自动跟随模式。`
+        message: `已解除标签页锁定 (原 ID: ${oldId}) 并释放后台保活资源。现在已恢复自动跟随模式。`
       }
     };
   }
@@ -1023,6 +1112,23 @@ async function handleBridgeCommand(method, params) {
     };
   }
 
+  // ── 2.1 后台防休眠保活机制（专治 Edge Sleeping Tabs 与嘉立创EDA等重度任务冻结） ──
+  if (method === 'browser_keep_alive') {
+    const targetTab = await resolveTargetTab(params.tab_id);
+    if (!targetTab || !targetTab.id) return { error: '未找到指定标签页' };
+    const enabled = params.enabled !== false;
+    await setTabKeepAlive(targetTab.id, enabled);
+    return {
+      result: {
+        tab_id: targetTab.id,
+        keep_alive: enabled,
+        title: targetTab.title,
+        url: targetTab.url,
+        message: `标签页 [ID: ${targetTab.id}] ${enabled ? '已成功开启后台防休眠保活（CDP 调试通道常驻免休眠 + 无声媒体保活 + 屏幕唤醒锁 + 高频心跳）' : '已关闭后台保活'}`
+      }
+    };
+  }
+
   // ── 2.0 靶向屏幕与局部元素截图 ──
   if (method === 'browser_screenshot') {
     const targetTab = await resolveTargetTab(params.tab_id);
@@ -1358,10 +1464,12 @@ async function broadcastActiveTabInfo() {
         title: targetTab.title,
         url: targetTab.url,
         favIconUrl: targetTab.favIconUrl,
-        is_bound: targetTab.id === boundTabId
+        is_bound: targetTab.id === boundTabId,
+        is_keep_alive: keepAliveTabs.has(targetTab.id)
       },
       boundTabId,
-      aiWindowId
+      aiWindowId,
+      isKeepAlive: keepAliveTabs.has(targetTab.id)
     });
   }
 }
@@ -1378,6 +1486,13 @@ chrome.windows.onRemoved.addListener((windowId) => {
   if (windowId === aiWindowId) {
     aiWindowId = null;
     broadcastActiveTabInfo();
+  }
+});
+
+// 监听 Tab 关闭事件，自动清理保活资源
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (keepAliveTabs.has(tabId)) {
+    setTabKeepAlive(tabId, false).catch(() => {});
   }
 });
 
@@ -1400,13 +1515,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     lastSelectedText = msg.text;
     notifySidePanel({ type: 'SELECTION_CHANGED', text: msg.text });
   } else if (msg.type === 'GET_INITIAL_STATE') {
+    const tid = boundTabId || (activeControlledTab ? activeControlledTab.id : null);
     sendResponse({
       status: socket && socket.readyState === WebSocket.OPEN ? 'connected' : 'disconnected',
       port: currentPort,
       selection: lastSelectedText,
       tab: activeControlledTab,
       boundTabId,
-      aiWindowId
+      aiWindowId,
+      isKeepAlive: tid ? keepAliveTabs.has(tid) : false
     });
   } else if (msg.type === 'SET_PORT') {
     if (!Number.isInteger(msg.port) || msg.port < 1 || msg.port > 65535) {
@@ -1440,6 +1557,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     broadcastActiveTabInfo();
     sendResponse({ success: true, boundTabId });
+  } else if (msg.type === 'TOGGLE_KEEP_ALIVE') {
+    const tid = boundTabId || (activeControlledTab ? activeControlledTab.id : null);
+    if (tid) {
+      const nextState = !keepAliveTabs.has(tid);
+      setTabKeepAlive(tid, nextState).then(() => {
+        sendResponse({ success: true, keep_alive: nextState, tab_id: tid });
+      });
+      return true;
+    }
+    sendResponse({ success: false, error: '当前无受控标签页' });
   }
   return true;
 });
