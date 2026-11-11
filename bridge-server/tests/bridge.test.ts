@@ -56,3 +56,20 @@ test('relay IDs and sessions are isolated; disconnect rejects outstanding reques
     browser.close(); await rejected;
   } finally { bridge.close(); }
 });
+
+test('relay automatically promotes to master when master closes', async () => {
+  const { port, bridge: master } = await start();
+  const relay = new WebSocketBridge(port);
+  relay.start();
+  // Wait for relay to connect to master
+  await new Promise(r => setTimeout(r, 200));
+  // Close master
+  master.close();
+  // Relay should detect master close and promote itself to Master on the same port
+  await new Promise(r => setTimeout(r, 2000));
+  // Extension connects to the promoted relay
+  const browser = connect(port, '/ws', origin);
+  await once(browser, 'open');
+  browser.close();
+  relay.close();
+});

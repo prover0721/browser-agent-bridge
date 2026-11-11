@@ -141,20 +141,46 @@ class WebSocketBridge {
         }
         this.pendingRequests.clear();
     }
+    handleRelayFailure() {
+        if (this.isClosing)
+            return;
+        if (this.reconnectTimer)
+            clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = setTimeout(() => {
+            if (this.isClosing)
+                return;
+            this.isMaster = false;
+            if (this.relayWs) {
+                try {
+                    this.relayWs.terminate();
+                }
+                catch { }
+                this.relayWs = null;
+            }
+            this.start();
+        }, 1500);
+    }
     connectAsRelay() {
         if (this.isClosing)
             return;
         const ws = new ws_1.WebSocket(`ws://127.0.0.1:${this.port}/agent`, { maxPayload: 1024 * 1024 });
         this.relayWs = ws;
+        ws.on('open', () => {
+            if (this.reconnectTimer) {
+                clearTimeout(this.reconnectTimer);
+                this.reconnectTimer = null;
+            }
+        });
         ws.on('message', data => { try {
             this.settle(JSON.parse(data.toString()));
         }
         catch { } });
-        ws.on('error', () => { });
+        ws.on('error', () => {
+            this.handleRelayFailure();
+        });
         ws.on('close', () => {
             this.rejectPending('Master bridge disconnected');
-            if (!this.isClosing)
-                this.reconnectTimer = setTimeout(() => this.connectAsRelay(), 3000);
+            this.handleRelayFailure();
         });
     }
     broadcastHotReload() {

@@ -150,6 +150,26 @@ npm test
 npm audit
 ```
 
-全套 53 项测试覆盖后台防休眠持久保活（CDP 免疫/无声媒体流/唤醒锁/守护心跳）、拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 54 项测试覆盖后台防休眠持久保活（CDP 免疫/无声媒体流/唤醒锁/守护心跳）、中继失败自愈与主控故障自动抢占提权（Relay-to-Master Failover）、拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。
+
+## 项目交接与变更记录 (Handover & Changelog)
+
+### [2026-11-12] 桥接服务高可用自愈优化与 Windows 开机/持久守护进程部署
+
+- **变更背景与目的**：
+  用户在使用 Edge 浏览器时，侧边栏扩展偶尔断连并提示“连接中...”，排查发现：
+  1. 系统中存在一个由 AI 客户端（stdio MCP 客户端）衍生出的 Node.js 进程（如 PID 13772），当原主服务退出时，中继模式下的进程由于旧重连逻辑只会死循环尝试连接 Master，无法主动提权绑定 3088 端口，导致端口无人监听而断连。
+  2. 原服务进程依赖于会话任务，缺乏 Windows 操作系统级的自启与进程常驻守护机制。
+- **修改文件清单**：
+  - `bridge-server/src/ws-bridge.ts`: 增加 Relay 断连故障自愈与抢占监听逻辑（`handleRelayFailure` -> 自动提权为 Master 重启 3088 服务）。
+  - `bridge-server/tests/bridge.test.ts`: 新增 Relay 自动提权接管 Master 的测试用例（测试总数提升至 54 项）。
+  - `bridge-server/watchdog.js`: 新增独立守护进程，常驻监听子进程生命周期与异常崩溃自启。
+  - `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\BrowserAgentBridge.vbs`: 注册 Windows 登录自启无窗口后台守护。
+- **核心变动与注意事项**：
+  - **Relay-to-Master 故障转移 (Failover)**：当主控服务重启或关闭时，任何作为 Relay 连接的进程检测到主控关闭后，会主动解除中继态，并在 1.5 秒后尝试创建原生 WebSocketServer 抢占 3088 端口。若抢占成功则自动升级为 Master，浏览器扩展无需人工刷新即可无缝恢复通信；若端口被其他主控占据，则平滑降级为 Relay。
+  - **开机与静默常驻守护**：通过 Windows Startup 目录的 VBS 脚本静默拉起 `watchdog.js`，心跳保障 `node dist/index.js` 持续运行在后台，无论 Edge 何时开启均能秒连。
+- **后续交接/待办提示 (Next Steps)**：
+  - 遇到端口占用或服务调试时，可通过任务管理器查看后台 `node.exe` 守护进程，或查看 `bridge-server/daemon.log` 日志。
+  - 如需完全停用后台服务，只需从 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\` 移除 `BrowserAgentBridge.vbs` 并结束对应的 Node 进程即可。
