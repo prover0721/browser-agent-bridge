@@ -165,6 +165,65 @@ async function cdpDispatchInsertText(tabId, text) {
   scheduleCdpDetach(tabId);
 }
 
+async function cdpDispatchPaste(tabId, text) {
+  if (!chrome.debugger) return;
+  await attachCdp(tabId);
+  try {
+    if (chrome.scripting && chrome.scripting.executeScript) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (txt) => {
+          try {
+            const el = document.createElement('textarea');
+            el.value = txt;
+            el.style.position = 'fixed';
+            el.style.opacity = '0';
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+          } catch (_) {}
+        },
+        args: [text]
+      }).catch(() => {});
+    }
+  } catch (_) {}
+
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+    type: 'rawKeyDown',
+    windowsVirtualKeyCode: 17,
+    modifiers: 2,
+    key: 'Control',
+    code: 'ControlLeft'
+  }).catch(() => {});
+
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    windowsVirtualKeyCode: 86,
+    modifiers: 2,
+    key: 'v',
+    code: 'KeyV'
+  }).catch(() => {});
+
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    windowsVirtualKeyCode: 86,
+    modifiers: 2,
+    key: 'v',
+    code: 'KeyV'
+  }).catch(() => {});
+
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    windowsVirtualKeyCode: 17,
+    modifiers: 0,
+    key: 'Control',
+    code: 'ControlLeft'
+  }).catch(() => {});
+
+  scheduleCdpDetach(tabId);
+}
+
 async function cdpDispatchDrag(tabId, startX, startY, endX, endY, steps = 30) {
   if (!chrome.debugger) return;
   await attachCdp(tabId);
@@ -223,9 +282,36 @@ async function cdpDispatchDrag(tabId, startX, startY, endX, endY, steps = 30) {
   scheduleCdpDetach(tabId);
 }
 
+// ── MV3 Offscreen 永不休眠常驻文档管理 ──
+async function ensureOffscreenDocument() {
+  if (!chrome.offscreen || !chrome.offscreen.createDocument) return;
+  try {
+    if (chrome.offscreen.hasDocument) {
+      const exists = await chrome.offscreen.hasDocument();
+      if (exists) return;
+    }
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['BLOBS', 'DOM_PARSER'],
+      justification: 'Keep background service worker and WebSocket connection permanently awake'
+    });
+  } catch (_) {}
+}
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === 'keep-alive-offscreen') {
+    port.onMessage.addListener((msg) => {
+      if (msg?.type === 'HEARTBEAT') {
+        port.postMessage({ type: 'HEARTBEAT_ACK' });
+      }
+    });
+  }
+});
+
 // 从 storage 加载配置端口
 chrome.storage.local.get(['bridgePort'], (res) => {
   if (res.bridgePort) currentPort = res.bridgePort;
+  ensureOffscreenDocument().catch(() => {});
   connectBridge();
 });
 
@@ -1134,6 +1220,14 @@ async function handleBridgeCommand(method, params) {
     const targetTab = await resolveTargetTab(params.tab_id);
     if (!targetTab || !targetTab.id) return { error: '未找到目标标签页' };
 
+    let marks = null;
+    if (params.annotate === true) {
+      await ensureContentScriptInjected(targetTab.id);
+      const somRes = await chrome.tabs.sendMessage(targetTab.id, { action: 'ENABLE_SOM' }).catch(() => null);
+      if (somRes?.marks) marks = somRes.marks;
+      await new Promise(r => setTimeout(r, 60));
+    }
+
     const format = params.format === 'png' ? 'png' : 'jpeg';
     const quality = Math.min(100, Math.max(1, Number(params.quality) || 80));
 
@@ -1144,7 +1238,14 @@ async function handleBridgeCommand(method, params) {
         quality: format === 'png' ? undefined : quality
       });
     } catch (err) {
+      if (params.annotate === true) {
+        await chrome.tabs.sendMessage(targetTab.id, { action: 'CLEAR_SOM' }).catch(() => {});
+      }
       return { error: `截图失败: ${err.message}` };
+    }
+
+    if (params.annotate === true) {
+      await chrome.tabs.sendMessage(targetTab.id, { action: 'CLEAR_SOM' }).catch(() => {});
     }
 
     if (params.element_id !== undefined || params.selector) {
@@ -1162,6 +1263,7 @@ async function handleBridgeCommand(method, params) {
               element_id: params.element_id,
               selector: params.selector,
               format,
+              marks: marks || undefined,
               message: `已成功获取目标元素视口截图坐标 (x: ${bounds.rect.left}, y: ${bounds.rect.top}, w: ${bounds.rect.width}, h: ${bounds.rect.height})`
             }
           };
@@ -1173,7 +1275,112 @@ async function handleBridgeCommand(method, params) {
       result: {
         data_url: dataUrl,
         format,
-        message: '已成功捕获当前视口屏幕截图'
+        marks: marks || undefined,
+        message: marks ? `已成功捕获带 SoM (Set-of-Marks) 编号标注的视口截图 (共标注 ${marks.length} 个交互元素)` : '已成功捕获当前视口屏幕截图'
+      }
+    };
+  }
+
+  // ── 2.2 验证码滑块缺口自动识别与一键破盾 ──
+  if (method === 'browser_solve_slider') {
+    const targetTab = await resolveTargetTab(params.tab_id);
+    if (!targetTab || !targetTab.id) return { error: '未找到目标标签页' };
+    await ensureContentScriptInjected(targetTab.id);
+
+    const detectRes = await chrome.tabs.sendMessage(targetTab.id, {
+      action: 'DETECT_SLIDER_GAP',
+      payload: {
+        slider_selector: params.slider_selector,
+        bg_selector: params.bg_selector
+      }
+    });
+
+    if (!detectRes || !detectRes.success) {
+      return { error: detectRes?.error || '未能检测到页面滑块验证码控件' };
+    }
+
+    const { start_x, start_y, end_x, end_y, distance_x } = detectRes;
+    await cdpDispatchDrag(targetTab.id, start_x, start_y, end_x, end_y, 35);
+    await new Promise(r => setTimeout(r, 1200));
+    const fbRes = await chrome.tabs.sendMessage(targetTab.id, { action: 'GET_FEEDBACK' }).catch(() => null);
+
+    return {
+      result: {
+        success: true,
+        detection_type: detectRes.detection_type,
+        distance_x,
+        start: { x: start_x, y: start_y },
+        end: { x: end_x, y: end_y },
+        feedback: fbRes?.feedback,
+        message: `已成功自动识别滑块并以拟人化三次贝塞尔曲线完成拖拽 (偏移距离: ${distance_x}px)`
+      }
+    };
+  }
+
+  // ── 2.2 请求嗅探一键转 API / cURL 直连模式 ──
+  if (method === 'browser_export_api_request') {
+    const targetTab = await resolveTargetTab(params.tab_id);
+    if (!targetTab || !targetTab.id) return { error: '未找到目标标签页' };
+    await ensureContentScriptInjected(targetTab.id);
+
+    const logsRes = await chrome.tabs.sendMessage(targetTab.id, {
+      action: 'GET_NETWORK_LOGS',
+      payload: {
+        url_pattern: params.url_pattern,
+        method: params.method,
+        limit: 30
+      }
+    });
+
+    const logs = logsRes?.logs || [];
+    if (logs.length === 0) {
+      return { error: '最近网络日志中未捕获到符合条件的 API 请求，请先在页面上触发一次交互' };
+    }
+
+    const targetReq = logs.find(l => l.method === 'POST' || l.method === 'PUT') || logs[0];
+    let cookieHeader = '';
+    try {
+      if (chrome.cookies && chrome.cookies.getAll && targetReq.url) {
+        const parsedUrl = new URL(targetReq.url);
+        const cookies = await chrome.cookies.getAll({ domain: parsedUrl.hostname });
+        cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+      }
+    } catch {}
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'User-Agent': (typeof navigator !== 'undefined' ? navigator.userAgent : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'),
+      ...(cookieHeader ? { 'Cookie': cookieHeader } : {})
+    };
+
+    const bodyStr = targetReq.requestBody ? (typeof targetReq.requestBody === 'string' ? targetReq.requestBody : JSON.stringify(targetReq.requestBody)) : '';
+    const curlCmd = `curl -X ${targetReq.method} "${targetReq.url}" ` +
+      Object.entries(headers).map(([k, v]) => `-H "${k}: ${v}" `).join('') +
+      (bodyStr ? `--data '${bodyStr}'` : '');
+
+    const nodeCode = `fetch("${targetReq.url}", {\n` +
+      `  method: "${targetReq.method}",\n` +
+      `  headers: ${JSON.stringify(headers, null, 4)},\n` +
+      (bodyStr ? `  body: JSON.stringify(${bodyStr})\n` : '') +
+      `}).then(res => res.json()).then(console.log);`;
+
+    const pythonCode = `import requests\n\n` +
+      `headers = ${JSON.stringify(headers, null, 4)}\n` +
+      `response = requests.${targetReq.method.toLowerCase()}("${targetReq.url}", headers=headers` +
+      (bodyStr ? `, json=${bodyStr}` : '') +
+      `)\nprint(response.json())`;
+
+    return {
+      result: {
+        url: targetReq.url,
+        method: targetReq.method,
+        status: targetReq.status,
+        headers,
+        request_body: targetReq.requestBody,
+        response_preview: targetReq.responseBody,
+        curl_command: curlCmd.trim(),
+        node_snippet: nodeCode,
+        python_snippet: pythonCode
       }
     };
   }
@@ -1188,7 +1395,7 @@ async function handleBridgeCommand(method, params) {
   }
 
   // ── 2. 页面级信息与跳转命令 ──
-  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_hover', 'browser_press', 'browser_scroll', 'browser_upload_file', 'browser_fill_form', 'browser_insert_text', 'browser_drag'];
+  const mutations = ['browser_navigate', 'browser_click', 'browser_type', 'browser_hover', 'browser_press', 'browser_scroll', 'browser_upload_file', 'browser_fill_form', 'browser_insert_text', 'browser_drag', 'browser_solve_slider'];
   if (mutations.includes(method) && !params.tab_id && !boundTabId) return { error: '修改页面前请指定 tab_id 或绑定标签页' };
   const targetTab = await resolveTargetTab(params.tab_id);
   if (!targetTab || !targetTab.id) {
@@ -1251,7 +1458,7 @@ async function handleBridgeCommand(method, params) {
           await ensureContentScriptInjected(targetTab.id);
           const bounds = await chrome.tabs.sendMessage(targetTab.id, {
             action: 'GET_ELEMENT_BOUNDS',
-            payload: { element_id: params.element_id, selector: params.selector, text: params.text }
+            payload: { element_id: params.element_id, selector: params.selector, text: params.text, mark_id: params.mark_id }
           });
           if (bounds?.success && bounds.rect) {
             const x = bounds.rect.left + bounds.rect.width / 2;
@@ -1272,6 +1479,7 @@ async function handleBridgeCommand(method, params) {
         payload = {
           id: params.element_id,
           element_id: params.element_id,
+          mark_id: params.mark_id,
           text: params.text,
           selector: params.selector,
           snapshot_id: params.snapshot_id,
@@ -1332,6 +1540,29 @@ async function handleBridgeCommand(method, params) {
         };
         break;
       case 'browser_type':
+        if (params.method === 'clipboard') {
+          await ensureContentScriptInjected(targetTab.id);
+          const bounds = await chrome.tabs.sendMessage(targetTab.id, {
+            action: 'GET_ELEMENT_BOUNDS',
+            payload: { element_id: params.element_id, selector: params.selector }
+          });
+          if (bounds?.success && bounds.rect) {
+            const x = bounds.rect.left + bounds.rect.width / 2;
+            const y = bounds.rect.top + bounds.rect.height / 2;
+            await cdpDispatchClick(targetTab.id, x, y);
+            await new Promise(r => setTimeout(r, 60));
+          }
+          await cdpDispatchPaste(targetTab.id, params.text);
+          const fbRes = await chrome.tabs.sendMessage(targetTab.id, { action: 'GET_FEEDBACK' }).catch(() => null);
+          return {
+            result: {
+              success: true,
+              method: 'clipboard',
+              message: `已通过物理剪贴板 (Ctrl+V) 成功注入文本`,
+              feedback: fbRes?.feedback
+            }
+          };
+        }
         if (params.trusted === true) {
           await ensureContentScriptInjected(targetTab.id);
           const bounds = await chrome.tabs.sendMessage(targetTab.id, {

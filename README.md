@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -131,6 +131,11 @@
 - **活动弹窗感知与单选/复选框增强**：自动检测当前置顶的 Dialog / Modal 弹窗（如 Element UI 的 `.el-dialog`）并在快照中单独分区置顶；深度识别 `<label>` 包裹的隐藏式 Radio/Checkbox。
 - **长网页 Token 瘦身**：`browser_snapshot` 默认开启视口过滤 (`viewport_only: true`)，只返回屏幕可见核心元素，大幅节省 80%+ Token。
 - **后台独立窗口与会话隔离**：后台任务直接调用 `browser_navigate(url)` 即可自动在 AI 专属独立工作窗口运行，不打扰用户前台浏览；支持多个 Agent 并发连接且互不干扰。
+- **MV3 Offscreen 永不休眠架构 (24/7 持久守护)**：借助 Chrome 官方标准 `chrome.offscreen` 挂载独立无界面守护 DOM 文档，彻底绕过 MV3 Service Worker 在无前台操作 30 秒后的内核自动挂起（Suspend）机制，维持常驻 WebSocket 管道毫秒级响应。
+- **SoM (Set-of-Marks) 视觉元素高亮标注截屏 (`browser_screenshot(annotate: true)` & `browser_click(mark_id)`)**：截屏瞬间自动遍历视口内全部核心可交互元素（按钮、输入框、Canvas锚点），动态覆盖带微型高对比度数字编号标签（`[#1]`, `[#2]`），并输出元素编号映射字典。视觉大模型看图直呼编号即可秒级精准盲操，攻克无文字图标与复杂界面死角。
+- **请求嗅探一键转 API / cURL 直连 (`browser_export_api_request`)**：自动捕获并提炼页面最近触发的核心 API 接口网络请求，一键生成免前端翻页的标准 `cURL` 终端命令与 Node/Python 请求代码片段（自动带齐 Cookie 与鉴权 Header）。完成单次操作后后续 100 次批量任务可直接后台高并发调用，从根本上彻底避开页面频繁翻页的风控与滑块检测。
+- **滑块缺口图像边缘检测与一键破盾 (`browser_solve_slider`)**：自动定位当前弹出的滑动验证码（应届生网、极验、腾讯、阿里等），基于 Canvas 图像边缘差分检测与轨道算法计算精确水平拖拽偏移，自动衔接拟人化三次贝塞尔曲线物理拖拽破盾，一行指令即可自动通关。
+- **物理剪贴板粘贴注入 (`browser_type(method: 'clipboard')`)**：通过 CDP 触发真实的系统级物理剪贴板写入与 `Ctrl+V` 按键序列，突破所有反爬或禁用普通键入的只读/自制输入框。
 
 ## 安全边界与限制
 
@@ -150,11 +155,33 @@ npm test
 npm audit
 ```
 
-全套 54 项测试覆盖后台防休眠持久保活（CDP 免疫/无声媒体流/唤醒锁/守护心跳）、中继失败自愈与主控故障自动抢占提权（Relay-to-Master Failover）、拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 60 项测试覆盖后台防休眠持久保活（CDP 免疫/无声媒体流/唤醒锁/守护心跳/Offscreen 文档）、中继失败自愈与主控故障自动抢占提权（Relay-to-Master Failover）、SoM 视觉标注与编号盲操、请求嗅探一键转 cURL 直连、滑块缺口图像边缘自动检测与一键破盾、物理剪贴板粘贴注入、拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。
 
 ## 项目交接与变更记录 (Handover & Changelog)
+
+### [2026-11-12 (v2.2.0)] 核心能力跃迁：MV3 Offscreen 永不休眠、SoM 视觉标注、API 请求直连提炼与滑块一键破盾
+
+- **变更背景与目的**：
+  在实际业务（高频后台挂机、复杂多模态网页盲操、应届生网批量表单防风控对抗）中进一步消灭潜在瓶颈：
+  1. MV3 Service Worker 存在后台空闲 30s 被浏览器内核强行挂起风险；
+  2. 纯文本快照对无文字图标和 Canvas 复杂组件定位困难，大模型需要更精准直观的视觉参考；
+  3. 批量表单频繁翻页容易触发滑动验证码，需要免前端 UI 翻页的 API 直连模式以及自动化破盾工具；
+  4. 针对反爬输入框需要物理级的剪贴板粘贴通道。
+- **修改文件清单**：
+  - `browser-extension/manifest.json`: 声明 `"offscreen"` 与 `"clipboardWrite"` 权限，版本升至 `2.2.0`。
+  - `browser-extension/offscreen.html` & `browser-extension/offscreen.js`: 新增常驻守护 DOM 文档，长效维系 WebSocket 与心跳通道，彻底免疫浏览器后台空闲休眠。
+  - `browser-extension/content.js`: 新增 SoM (Set-of-Marks) 交互元素高亮编号覆盖层、元素 `mark_id` 字典建立与点击支持；内置滑块缺口与轨道智能差分检测算法 (`detectSliderGap`)。
+  - `browser-extension/background.js`: 接入 Offscreen 挂载与保活通信；扩展 `browser_screenshot(annotate: true)`；新增 `browser_solve_slider` 自动破盾与 `browser_export_api_request` 自动提炼 cURL/Node/Python 脚本；`browser_type` 增加 `method: "clipboard"` 物理剪贴板粘贴注入。
+  - `bridge-server/src/index.ts` & `bridge-server/src/ws-bridge.ts`: 注册新工具并扩充指令集合与参数 Schema。
+  - `bridge-server/tests/extension.test.ts`: 补充 6 项涵盖 SoM、滑块破盾、API 提炼及物理剪贴板的集成单测（全套 60 项测试 100% PASS）。
+- **核心变动与注意事项**：
+  - **SoM 视觉标注**：调用 `browser_screenshot({ annotate: true })` 时，页面可见交互元素左上角会打上半透明红色编号标签并在返回数据中附带 `marks` 数组，后续可直接调用 `browser_click({ mark_id: 1 })` 完成点击。
+  - **一键破盾**：面对各类滑动验证码，直接调用 `browser_solve_slider()` 即可自动完成图像差分定位与拟人化贝塞尔曲线拖动。
+  - **API 直连加速**：在页面完成一次示例操作后，调用 `browser_export_api_request()` 即可获取当前接口的完整 cURL 和 Python/Node 代码，后续大量重复请求可直接在后台异步批量并发，完全避免页面级风控。
+- **后续交接/待办提示 (Next Steps)**：
+  - 嘉立创EDA 相关业务请继续使用专门的 `easyeda-agent` 和 `EDA Agent Connector` typed 架构进行参数化设计，与本通用浏览器 Agent 桥梁各司其职、互补协作。
 
 ### [2026-11-12] 桥接服务高可用自愈优化与 Windows 开机/持久守护进程部署
 

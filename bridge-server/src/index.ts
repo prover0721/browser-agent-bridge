@@ -566,6 +566,10 @@ const TOOLS: Tool[] = [
           type: 'number',
           description: '可选：目标元素的编号（由 browser_snapshot 返回的数字 ID，如 1、2 等）',
         },
+        mark_id: {
+          type: 'number',
+          description: '可选：SoM 视觉标注的数字编号（配合 browser_screenshot(annotate: true) 使用，直接传图上的数字编号即可秒级点击对应控件）',
+        },
         text: {
           type: 'string',
           description: '可选：通过目标按钮或操作项的文字直接定位并点击（如 "编辑"、"添加"、"同步至在线简历"、"删除"）',
@@ -635,6 +639,11 @@ const TOOLS: Tool[] = [
         clear_first: {
           type: 'boolean',
           description: '是否在输入前先清空已有内容，默认为 true',
+        },
+        method: {
+          type: 'string',
+          enum: ['default', 'clipboard'],
+          description: '可选：输入模式，传 "clipboard" 可通过原生物理剪贴板粘贴 (Ctrl+V) 注入文本，专门突破严格反爬与禁用软键盘的只读/自制输入框',
         },
         trusted: {
           type: 'boolean',
@@ -819,6 +828,10 @@ const TOOLS: Tool[] = [
           type: 'number',
           description: '可选：图片压缩质量（1–100，默认为 80）',
         },
+        annotate: {
+          type: 'boolean',
+          description: '可选：是否在截屏上自动生成 Set-of-Marks (SoM) 交互元素编号标签，并在返回中附带编号与选择器字典，辅助视觉大模型精准盲操',
+        },
         tab_id: {
           type: 'number',
           description: '可选：目标标签页 ID',
@@ -893,6 +906,50 @@ const TOOLS: Tool[] = [
         tab_id: {
           type: 'number',
           description: '可选：指定要保活的目标标签页 ID，不传则保活当前受控/绑定的标签页',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'browser_solve_slider',
+    description: '【v2.2 验证码滑块缺口自动识别与一键破盾】自动检测当前页面弹出的滑动验证码（应届生网、极验、腾讯、阿里等），基于 Canvas 图像边缘差分算法定位滑块缺口偏移，并结合拟人化三次贝塞尔曲线物理拖拽一次性自动破盾。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slider_selector: {
+          type: 'string',
+          description: '可选：滑块按钮的 CSS 选择器（如 ".nc_iconfont", ".btn_slide"），不传则自动智能识别',
+        },
+        bg_selector: {
+          type: 'string',
+          description: '可选：滑块背景图片/Canvas 选择器，不传则自动智能识别',
+        },
+        tab_id: {
+          type: 'number',
+          description: '可选：指定要在哪个标签页中执行',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'browser_export_api_request',
+    description: '【v2.2 请求嗅探一键转 API / cURL 直连】自动捕获并提炼页面最近触发的核心 API 网络请求，自动生成可直接在命令行或后台脚本中执行的标准 cURL 命令与 Node/Python 代码，彻底摆脱频繁在网页中翻页或点击操作带来的前端风控（滑动验证码）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url_pattern: {
+          type: 'string',
+          description: '可选：URL 模糊过滤关键词（如 "resume", "apply", "search", "list"）',
+        },
+        method: {
+          type: 'string',
+          description: '可选：HTTP 请求方法过滤（如 "POST", "GET"）',
+        },
+        tab_id: {
+          type: 'number',
+          description: '可选：指定要在哪个标签页中提取',
         },
       },
       required: [],

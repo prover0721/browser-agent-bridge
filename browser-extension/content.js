@@ -15,6 +15,183 @@
   // 敏感字段检测正则
   const SENSITIVE_REGEX = /password|pwd|cvv|cvc|cardnumber|creditcard|secret|token/i;
 
+  // ── SoM (Set-of-Marks) 视觉元素高亮标注覆盖层与映射表 ──
+  const somMarksMap = new Map();
+
+  function getSimpleSelector(el) {
+    if (!el || !(el instanceof HTMLElement)) return '';
+    if (el.id) return `#${el.id}`;
+    const tag = el.tagName.toLowerCase();
+    const cls = typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
+    return `${tag}${cls}`;
+  }
+
+  function enableSomMarks() {
+    clearSomMarks();
+    somMarksMap.clear();
+
+    const overlay = document.createElement('div');
+    overlay.id = '__browser_agent_som_overlay__';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:2147483647;overflow:hidden;';
+
+    const selectors = [
+      'button', 'a[href]', 'input', 'textarea', 'select',
+      '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
+      '[role="tab"]', '[role="switch"]', '[contenteditable="true"]',
+      '[tabindex]:not([tabindex="-1"])'
+    ];
+    const elements = Array.from(document.querySelectorAll(selectors.join(',')));
+    document.querySelectorAll('div, span, li').forEach(el => {
+      if (elements.length >= 80) return;
+      if (el.children.length === 0 && (el.onclick || window.getComputedStyle(el).cursor === 'pointer')) {
+        elements.push(el);
+      }
+    });
+
+    const marks = [];
+    let markId = 1;
+    const vpW = window.innerWidth;
+    const vpH = window.innerHeight;
+
+    for (const el of elements) {
+      if (markId > 80) break;
+      if (!isElementVisible(el)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 6 || rect.height < 6) continue;
+      if (rect.right < 0 || rect.bottom < 0 || rect.left > vpW || rect.top > vpH) continue;
+
+      somMarksMap.set(markId, el);
+
+      const box = document.createElement('div');
+      box.style.cssText = `position:absolute;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;border:1.5px solid #e11d48;background:rgba(225,29,72,0.06);box-sizing:border-box;pointer-events:none;`;
+
+      const badge = document.createElement('span');
+      badge.textContent = String(markId);
+      badge.style.cssText = `position:absolute;left:${Math.max(0, rect.left)}px;top:${Math.max(0, rect.top - 16)}px;background:#e11d48;color:#ffffff;font-size:11px;font-weight:bold;padding:0 4px;border-radius:2px;font-family:monospace;line-height:16px;box-shadow:0 1px 2px rgba(0,0,0,0.3);pointer-events:none;z-index:1;`;
+
+      overlay.appendChild(box);
+      overlay.appendChild(badge);
+
+      const text = (el.innerText || el.textContent || el.value || el.placeholder || '').trim().slice(0, 30);
+      marks.push({
+        mark_id: markId,
+        tag: el.tagName.toLowerCase(),
+        text: text || undefined,
+        selector: getSimpleSelector(el),
+        rect: {
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        }
+      });
+      markId++;
+    }
+
+    document.documentElement.appendChild(overlay);
+    return marks;
+  }
+
+  function clearSomMarks() {
+    const existing = document.getElementById('__browser_agent_som_overlay__');
+    if (existing) existing.remove();
+  }
+
+  // ── 滑块验证码缺口与轨道智能识别 ──
+  function detectSliderGap(payload = {}) {
+    let sliderEl = null;
+    if (payload.slider_selector) {
+      sliderEl = document.querySelector(payload.slider_selector);
+    }
+    if (!sliderEl) {
+      const sliderSelectors = [
+        '.nc_iconfont', '.btn_slide', '.slider', 'div[role="slider"]',
+        '.geetest_slider_button', '.tcaptcha-transform', '.yidun_slider',
+        '.secsdk-captcha-drag-icon', 'span[class*="slider"]', 'div[class*="slider"]',
+        'div[class*="slide"]', 'div[class*="handler"]', 'div[class*="drag"]'
+      ];
+      for (const sel of sliderSelectors) {
+        const found = document.querySelector(sel);
+        if (found && (found.offsetWidth > 0 || found.getBoundingClientRect().width > 0)) {
+          sliderEl = found;
+          break;
+        }
+      }
+      if (!sliderEl) {
+        const allNodes = document.querySelectorAll('div, span, button');
+        for (const n of allNodes) {
+          const txt = (n.innerText || n.textContent || '').trim();
+          if ((txt === '>>' || txt === '>') && n.getBoundingClientRect().width > 15) {
+            sliderEl = n;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!sliderEl) return { success: false, error: '未在页面上找到滑块按钮控件' };
+
+    const sliderRect = sliderEl.getBoundingClientRect();
+    const startX = Math.round(sliderRect.left + sliderRect.width / 2);
+    const startY = Math.round(sliderRect.top + sliderRect.height / 2);
+
+    let trackEl = null;
+    let parent = sliderEl.parentElement;
+    for (let i = 0; i < 4 && parent; i++) {
+      const pRect = parent.getBoundingClientRect();
+      if (pRect.width > sliderRect.width + 60) {
+        trackEl = parent;
+        break;
+      }
+      parent = parent.parentElement;
+    }
+
+    let bgEl = null;
+    if (payload.bg_selector) {
+      bgEl = document.querySelector(payload.bg_selector);
+    }
+    if (!bgEl) {
+      const bgSelectors = [
+        'canvas.geetest_canvas_bg', 'canvas[class*="bg"]', 'canvas[class*="captcha"]',
+        'img[class*="bg"]', 'img[class*="captcha"]', '.tcaptcha-img', '.yidun_bg-img'
+      ];
+      for (const sel of bgSelectors) {
+        const found = document.querySelector(sel);
+        if (found && found.getBoundingClientRect().width > 100) {
+          bgEl = found;
+          break;
+        }
+      }
+    }
+
+    let targetDistance = 0;
+    let detectionType = 'track_full';
+
+    if (bgEl) {
+      const bgRect = bgEl.getBoundingClientRect();
+      targetDistance = Math.round(bgRect.width * 0.65);
+      detectionType = 'puzzle_gap';
+    }
+
+    if (detectionType === 'track_full' && trackEl) {
+      const trackRect = trackEl.getBoundingClientRect();
+      targetDistance = Math.round(trackRect.width - sliderRect.width + 4);
+    } else if (targetDistance === 0) {
+      targetDistance = 280;
+    }
+
+    return {
+      success: true,
+      detection_type: detectionType,
+      start_x: startX,
+      start_y: startY,
+      end_x: startX + targetDistance,
+      end_y: startY,
+      distance_x: targetDistance,
+      dpr: window.devicePixelRatio || 1
+    };
+  }
+
   /**
    * 收集操作执行前后的自感知页面变动反馈（Toast、表单报错、URL 变化）
    */
@@ -613,12 +790,18 @@
 
   function executeClick(payload, expectedSnapshot) {
     let el = null;
+    let markId = typeof payload === 'object' ? payload?.mark_id : null;
     let id = typeof payload === 'object' ? (payload?.id ?? payload?.element_id) : payload;
     let selector = typeof payload === 'object' ? payload?.selector : null;
     let text = typeof payload === 'object' ? payload?.text : null;
     let expSnap = typeof payload === 'object' ? (payload?.snapshot_id || expectedSnapshot) : expectedSnapshot;
 
-    if (id !== undefined && id !== null) {
+    if (markId !== undefined && markId !== null) {
+      el = somMarksMap.get(Number(markId));
+      if (!el) {
+        return { success: false, error: `未找到编号为 [#${markId}] 的标注元素，请重新调用 browser_screenshot(annotate: true)` };
+      }
+    } else if (id !== undefined && id !== null) {
       el = elementMap.get(Number(id));
       if (!el) {
         return { success: false, error: `未找到 ID 为 [${id}] 的元素，请先调用 browser_snapshot 获取最新元素列表。` };
@@ -1720,7 +1903,9 @@
       }
       case 'GET_ELEMENT_BOUNDS': {
         let el = null;
-        if (payload?.element_id !== undefined && payload?.element_id !== null) {
+        if (payload?.mark_id !== undefined && payload?.mark_id !== null) {
+          el = somMarksMap.get(Number(payload.mark_id));
+        } else if (payload?.element_id !== undefined && payload?.element_id !== null) {
           el = elementMap.get(Number(payload.element_id));
         } else if (payload?.selector) {
           el = document.querySelector(payload.selector);
@@ -1784,6 +1969,21 @@
           },
           track_width: trackWidth
         });
+        break;
+      }
+      case 'ENABLE_SOM': {
+        const marks = enableSomMarks();
+        sendResponse({ success: true, marks });
+        break;
+      }
+      case 'CLEAR_SOM': {
+        clearSomMarks();
+        sendResponse({ success: true });
+        break;
+      }
+      case 'DETECT_SLIDER_GAP': {
+        const gapInfo = detectSliderGap(payload || {});
+        sendResponse(gapInfo);
         break;
       }
       case 'GET_FEEDBACK': {

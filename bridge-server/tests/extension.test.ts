@@ -101,8 +101,15 @@ function background() {
       sendMessage: async (id: number, message: any) => {
         domCalls.push({ id, ...message });
         if (message.action === 'GET_ELEMENT_BOUNDS') return { success: true, rect: { left: 10, top: 20, width: 100, height: 40 } };
+        if (message.action === 'DETECT_SLIDER_GAP') return { success: true, start_x: 20, start_y: 50, end_x: 260, end_y: 50, distance_x: 240, detection_type: 'track_full' };
+        if (message.action === 'ENABLE_SOM') return { success: true, marks: [{ mark_id: 1, tag: 'button', text: 'Submit', selector: '#submit-btn' }] };
+        if (message.action === 'GET_NETWORK_LOGS') return { success: true, logs: [{ url: 'https://example.com/api/submit', method: 'POST', status: 200, requestBody: { name: 'test' }, responseBody: { code: 0 } }] };
         return { success: true, message: 'done' };
       }
+    },
+    offscreen: {
+      createDocument: async () => {},
+      hasDocument: async () => false
     },
     debugger: {
       attach: async () => {},
@@ -118,7 +125,7 @@ function background() {
       update: async (id: number, options: any) => { windowUpdates.push({ id, ...options }); if (options.focused) foreground = id; return { id }; },
       remove: async (id: number) => { windows.delete(id); for (const tab of tabs.values()) if (tab.windowId === id) tabs.delete(tab.id); },
       onRemoved: event()
-    }, action: { onClicked: event() }, runtime: { reload: () => {}, sendMessage: () => Promise.resolve(), onMessage: { addListener(fn: any) { runtimeListener = fn; } } },
+    }, action: { onClicked: event() }, runtime: { reload: () => {}, sendMessage: () => Promise.resolve(), onMessage: { addListener(fn: any) { runtimeListener = fn; } }, onConnect: event() },
     power: { requestKeepAwake: () => {}, releaseKeepAwake: () => {} },
     bookmarks: {
       getTree: async () => [
@@ -849,4 +856,65 @@ test('content script handles ENABLE_KEEP_ALIVE and KEEP_ALIVE_PING', () => {
 
   const disableRes = page.call('DISABLE_KEEP_ALIVE');
   assert.equal(disableRes.success, true);
+});
+
+test('content script handles ENABLE_SOM, creates visual badges and clicks by mark_id', () => {
+  const page = content('<button id="submit-btn">Submit</button><input id="name-input" type="text" />');
+  const somRes = page.call('ENABLE_SOM');
+  assert.equal(somRes.success, true);
+  assert.ok(somRes.marks.length >= 2);
+  assert.equal(somRes.marks[0].mark_id, 1);
+  assert.ok(page.window.document.getElementById('__browser_agent_som_overlay__'));
+
+  let clicked = false;
+  page.window.document.getElementById('submit-btn').addEventListener('click', () => { clicked = true; });
+  const clickRes = page.call('CLICK', { mark_id: 1 });
+  assert.equal(clickRes.success, true);
+  assert.equal(clicked, true);
+
+  const clearRes = page.call('CLEAR_SOM');
+  assert.equal(clearRes.success, true);
+  assert.equal(page.window.document.getElementById('__browser_agent_som_overlay__'), null);
+});
+
+test('content script detects slider button and computes track drag distance', () => {
+  const page = content('<div class="slider-track"><div class="btn_slide">>></div></div>');
+  const gapRes = page.call('DETECT_SLIDER_GAP');
+  assert.equal(gapRes.success, true);
+  assert.ok(gapRes.distance_x > 0);
+  assert.ok(gapRes.start_x > 0);
+  assert.equal(gapRes.end_x, gapRes.start_x + gapRes.distance_x);
+});
+
+test('browser_solve_slider detects gap and dispatches CDP drag automatically', async () => {
+  const ext = background();
+  const reply = await ext.call('browser_solve_slider', { tab_id: 1 });
+  assert.equal(reply.result.success, true);
+  assert.equal(reply.result.distance_x, 240);
+  assert.ok(ext.cdpCalls.some(c => c.method === 'Input.dispatchMouseEvent'));
+});
+
+test('browser_export_api_request generates curl, node and python snippets', async () => {
+  const ext = background();
+  const reply = await ext.call('browser_export_api_request', { tab_id: 1 });
+  assert.equal(reply.result.method, 'POST');
+  assert.ok(reply.result.curl_command.includes('curl -X POST'));
+  assert.ok(reply.result.node_snippet.includes('fetch('));
+  assert.ok(reply.result.python_snippet.includes('requests.post('));
+});
+
+test('browser_screenshot with annotate: true includes SoM marks', async () => {
+  const ext = background();
+  const reply = await ext.call('browser_screenshot', { tab_id: 1, annotate: true });
+  assert.ok(reply.result.data_url);
+  assert.ok(reply.result.marks);
+  assert.equal(reply.result.marks[0].mark_id, 1);
+});
+
+test('browser_type with method: clipboard triggers physical paste sequence', async () => {
+  const ext = background();
+  const reply = await ext.call('browser_type', { tab_id: 1, element_id: 1, text: 'HelloClipboard', method: 'clipboard' });
+  assert.equal(reply.result.success, true);
+  assert.equal(reply.result.method, 'clipboard');
+  assert.ok(ext.cdpCalls.some(c => c.method === 'Input.dispatchKeyEvent' && c.params?.key === 'v'));
 });
