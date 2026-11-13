@@ -168,11 +168,18 @@ async function cdpDispatchInsertText(tabId, text) {
 async function cdpDispatchPaste(tabId, text) {
   if (!chrome.debugger) return;
   await attachCdp(tabId);
+  let previousClipboard = null;
   try {
     if (chrome.scripting && chrome.scripting.executeScript) {
-      await chrome.scripting.executeScript({
+      const copyRes = await chrome.scripting.executeScript({
         target: { tabId },
-        func: (txt) => {
+        func: async (txt) => {
+          let backup = null;
+          try {
+            if (navigator.clipboard && navigator.clipboard.readText) {
+              backup = await navigator.clipboard.readText();
+            }
+          } catch (_) {}
           try {
             const el = document.createElement('textarea');
             el.value = txt;
@@ -183,9 +190,13 @@ async function cdpDispatchPaste(tabId, text) {
             document.execCommand('copy');
             document.body.removeChild(el);
           } catch (_) {}
+          return backup;
         },
         args: [text]
-      }).catch(() => {});
+      }).catch(() => []);
+      if (Array.isArray(copyRes) && copyRes[0] && typeof copyRes[0].result === 'string') {
+        previousClipboard = copyRes[0].result;
+      }
     }
   } catch (_) {}
 
@@ -220,6 +231,32 @@ async function cdpDispatchPaste(tabId, text) {
     key: 'Control',
     code: 'ControlLeft'
   }).catch(() => {});
+
+  if (previousClipboard !== null && chrome.scripting && chrome.scripting.executeScript) {
+    await new Promise(r => setTimeout(r, 80));
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: async (prev) => {
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(prev);
+            return;
+          }
+        } catch (_) {}
+        try {
+          const el = document.createElement('textarea');
+          el.value = prev;
+          el.style.position = 'fixed';
+          el.style.opacity = '0';
+          document.body.appendChild(el);
+          el.select();
+          document.execCommand('copy');
+          document.body.removeChild(el);
+        } catch (_) {}
+      },
+      args: [previousClipboard]
+    }).catch(() => {});
+  }
 
   scheduleCdpDetach(tabId);
 }
@@ -1347,28 +1384,58 @@ async function handleBridgeCommand(method, params) {
       }
     } catch {}
 
-    const headers = {
-      'Content-Type': 'application/json',
-      'User-Agent': (typeof navigator !== 'undefined' ? navigator.userAgent : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'),
-      ...(cookieHeader ? { 'Cookie': cookieHeader } : {})
-    };
+    const capturedHeaders = (targetReq.requestHeaders && typeof targetReq.requestHeaders === 'object') ? targetReq.requestHeaders : {};
+    const headers = {};
+    const seenLower = new Set();
+    for (const [k, v] of Object.entries(capturedHeaders)) {
+      const lower = k.toLowerCase();
+      if (!seenLower.has(lower)) {
+        seenLower.add(lower);
+        headers[k] = v;
+      }
+    }
+    if (!seenLower.has('content-type') && targetReq.requestBody) {
+      headers['Content-Type'] = 'application/json';
+      seenLower.add('content-type');
+    }
+    if (!seenLower.has('user-agent')) {
+      headers['User-Agent'] = (typeof navigator !== 'undefined' ? navigator.userAgent : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+      seenLower.add('user-agent');
+    }
+    if (cookieHeader && !seenLower.has('cookie')) {
+      headers['Cookie'] = cookieHeader;
+      seenLower.add('cookie');
+    }
 
     const bodyStr = targetReq.requestBody ? (typeof targetReq.requestBody === 'string' ? targetReq.requestBody : JSON.stringify(targetReq.requestBody)) : '';
-    const curlCmd = `curl -X ${targetReq.method} "${targetReq.url}" ` +
-      Object.entries(headers).map(([k, v]) => `-H "${k}: ${v}" `).join('') +
-      (bodyStr ? `--data '${bodyStr}'` : '');
+    let isJsonBody = false;
+    if (bodyStr) {
+      try {
+        JSON.parse(bodyStr);
+        isJsonBody = true;
+      } catch {}
+    }
 
-    const nodeCode = `fetch("${targetReq.url}", {\n` +
+    const escShellSingle = (s) => String(s).replace(/'/g, `'\\''`);
+    const escDouble = (s) => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const curlCmd = `curl -X ${targetReq.method} "${escDouble(targetReq.url)}" ` +
+      Object.entries(headers).map(([k, v]) => `-H "${escDouble(k)}: ${escDouble(v)}" `).join('') +
+      (bodyStr ? `--data '${escShellSingle(bodyStr)}'` : '');
+
+    const nodeBodyLine = !bodyStr
+      ? ''
+      : (isJsonBody ? `  body: JSON.stringify(${bodyStr})\n` : `  body: ${JSON.stringify(bodyStr)}\n`);
+    const nodeCode = `fetch("${escDouble(targetReq.url)}", {\n` +
       `  method: "${targetReq.method}",\n` +
       `  headers: ${JSON.stringify(headers, null, 4)},\n` +
-      (bodyStr ? `  body: JSON.stringify(${bodyStr})\n` : '') +
+      nodeBodyLine +
       `}).then(res => res.json()).then(console.log);`;
 
-    const pythonCode = `import requests\n\n` +
+    const pythonCode = (isJsonBody ? `import json\nimport requests\n\n` : `import requests\n\n`) +
       `headers = ${JSON.stringify(headers, null, 4)}\n` +
-      `response = requests.${targetReq.method.toLowerCase()}("${targetReq.url}", headers=headers` +
-      (bodyStr ? `, json=${bodyStr}` : '') +
-      `)\nprint(response.json())`;
+      `response = requests.${targetReq.method.toLowerCase()}("${escDouble(targetReq.url)}", headers=headers` +
+      (bodyStr ? (isJsonBody ? `, json=json.loads(${JSON.stringify(bodyStr)})` : `, data=${JSON.stringify(bodyStr)}`) : '') +
+      `)\nprint(response.text)`;
 
     return {
       result: {

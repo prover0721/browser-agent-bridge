@@ -155,11 +155,32 @@ npm test
 npm audit
 ```
 
-全套 60 项测试覆盖后台防休眠持久保活（CDP 免疫/无声媒体流/唤醒锁/守护心跳/Offscreen 文档）、中继失败自愈与主控故障自动抢占提权（Relay-to-Master Failover）、SoM 视觉标注与编号盲操、请求嗅探一键转 cURL 直连、滑块缺口图像边缘自动检测与一键破盾、物理剪贴板粘贴注入、拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 63 项测试覆盖后台防休眠持久保活（CDP 免疫/无声媒体流/唤醒锁/守护心跳/Offscreen 文档）、中继失败自愈与主控故障自动抢占提权（Relay-to-Master Failover）、SoM 视觉标注与编号盲操（含同源 iframe 遍历、标签避让与断连失效校验）、请求嗅探（含完整请求头捕获）一键转 cURL/Node/Python 直连、滑块缺口像素级边缘扫描与一键破盾、物理剪贴板粘贴注入（含原剪贴板内容无损备份与恢复）、拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。
 
 ## 项目交接与变更记录 (Handover & Changelog)
+
+### [2026-11-13 (v2.2.1)] 细节鲁棒性全面加固：像素级滑块缺口扫描、真实请求头捕获、同源 iframe 校准、Watchdog 单实例与剪贴板无损恢复
+
+- **变更背景与目的**：
+  针对 v2.2.0 上线后的深度自检，集中优化 5 项影响复杂场景稳定性的细节问题：
+  1. 拼图滑块此前在未提供显式偏移时回退 `0.65 * width` 启发式估算，缺少对 `<canvas>` 背景的真实像素边缘分析；
+  2. `browser_export_api_request` 此前未捕获 `Authorization`、`X-CSRF-Token` 等请求头，且 cURL 单引号转义与 Python `json=` 语法在字符串请求体下存在隐患；
+  3. 同源 `iframe` 内的元素 CDP 坐标未叠加外层 `frameElement` 偏移，且 SoM 标注缺少同源 `iframe` 穿透、重叠标签错位避让及 DOM 断连失效校验；
+  4. `watchdog.js` 缺少单实例 PID 锁与 3088 端口活跃探活；
+  5. `cdpDispatchPaste` 覆盖系统剪贴板后未恢复用户原有剪贴板文本。
+- **修改文件清单**：
+  - `browser-extension/content.js`: 新增 `scanCanvasGapX` 拼图背景像素边缘垂直梯度扫描；新增 `getViewportRect` 递归叠加同源 `iframe` 偏移并在 `GET_ELEMENT_BOUNDS` 中应用；`enableSomMarks` 支持同源 `iframe` 遍历与标签防重叠微调；`executeClick` 与 `GET_ELEMENT_BOUNDS` 增加 `el.isConnected` 断连校验。
+  - `browser-extension/network-interceptor.js`: 新增 `normalizeHeaders` 捕获 `fetch` 请求头与 `XMLHttpRequest.prototype.setRequestHeader`，支持 `URLSearchParams` 请求体并将 `MAX_BODY_LEN` 提升至 `10000`。
+  - `browser-extension/background.js`: `browser_export_api_request` 合并捕获请求头（大小写去重）、完善 cURL 单引号转义、修复 Node/Python JSON 与表单代码生成；`cdpDispatchPaste` 在粘贴前备份 `navigator.clipboard.readText()` 并在粘贴后恢复。
+  - `bridge-server/watchdog.js`: 新增 `watchdog.pid` 单实例互斥锁与 127.0.0.1:3088 周期性 TCP 健康探测（连续 3 次失败自动重启假死子进程）。
+  - `bridge-server/tests/extension.test.ts`: 补充并更新 3 项集成测试（`mark_id` 断连拦截、`network-interceptor` 请求头捕获、`scanCanvasGapX` 边缘扫描），全套 63 项测试 100% PASS。
+- **核心变动与注意事项**：
+  - 跨域 `iframe` 受浏览器同源策略限制，无法在 Content Script 中读取其内部 DOM（仍由同源保护跳过，不影响主文档扫描）。
+  - `watchdog.pid` 位于 `bridge-server/watchdog.pid`，异常强杀后下次启动会自动检测 PID 存活状态并清理陈旧锁文件。
+- **后续交接/待办提示 (Next Steps)**：
+  - 若需在生产浏览器中生效，请在 Edge 扩展管理页点击一次刷新或调用 `browser_reload_extension` 重新加载 `browser-extension/` 目录。
 
 ### [2026-11-12 (v2.2.0)] 核心能力跃迁：MV3 Offscreen 永不休眠、SoM 视觉标注、API 请求直连提炼与滑块一键破盾
 

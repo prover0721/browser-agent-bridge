@@ -103,7 +103,7 @@ function background() {
         if (message.action === 'GET_ELEMENT_BOUNDS') return { success: true, rect: { left: 10, top: 20, width: 100, height: 40 } };
         if (message.action === 'DETECT_SLIDER_GAP') return { success: true, start_x: 20, start_y: 50, end_x: 260, end_y: 50, distance_x: 240, detection_type: 'track_full' };
         if (message.action === 'ENABLE_SOM') return { success: true, marks: [{ mark_id: 1, tag: 'button', text: 'Submit', selector: '#submit-btn' }] };
-        if (message.action === 'GET_NETWORK_LOGS') return { success: true, logs: [{ url: 'https://example.com/api/submit', method: 'POST', status: 200, requestBody: { name: 'test' }, responseBody: { code: 0 } }] };
+        if (message.action === 'GET_NETWORK_LOGS') return { success: true, logs: [{ url: 'https://example.com/api/submit', method: 'POST', status: 200, requestHeaders: { Authorization: 'Bearer tok-123', 'X-CSRF-Token': 'csrf-abc' }, requestBody: { name: 'test' }, responseBody: { code: 0 } }] };
         return { success: true, message: 'done' };
       }
     },
@@ -898,9 +898,13 @@ test('browser_export_api_request generates curl, node and python snippets', asyn
   const ext = background();
   const reply = await ext.call('browser_export_api_request', { tab_id: 1 });
   assert.equal(reply.result.method, 'POST');
+  assert.equal(reply.result.headers.Authorization, 'Bearer tok-123');
+  assert.equal(reply.result.headers['X-CSRF-Token'], 'csrf-abc');
   assert.ok(reply.result.curl_command.includes('curl -X POST'));
+  assert.ok(reply.result.curl_command.includes('Authorization: Bearer tok-123'));
   assert.ok(reply.result.node_snippet.includes('fetch('));
   assert.ok(reply.result.python_snippet.includes('requests.post('));
+  assert.ok(reply.result.python_snippet.includes('json.loads('));
 });
 
 test('browser_screenshot with annotate: true includes SoM marks', async () => {
@@ -917,4 +921,109 @@ test('browser_type with method: clipboard triggers physical paste sequence', asy
   assert.equal(reply.result.success, true);
   assert.equal(reply.result.method, 'clipboard');
   assert.ok(ext.cdpCalls.some(c => c.method === 'Input.dispatchKeyEvent' && c.params?.key === 'v'));
+});
+
+test('content script rejects stale mark_id after element is removed from DOM', () => {
+  const page = content('<button id="temp-btn">Temp</button>');
+  const somRes = page.call('ENABLE_SOM');
+  assert.equal(somRes.success, true);
+  assert.equal(somRes.marks.length, 1);
+
+  const btn = page.window.document.getElementById('temp-btn');
+  btn.remove();
+
+  const clickRes = page.call('CLICK', { mark_id: 1 });
+  assert.equal(clickRes.success, false);
+  assert.ok(clickRes.error.includes('已从 DOM 移除') || clickRes.error.includes('browser_screenshot'));
+});
+
+test('network-interceptor captures fetch and XHR requestHeaders', async () => {
+  const code = readFileSync(new URL('browser-extension/network-interceptor.js', root), 'utf8');
+  const posted: any[] = [];
+  class MockXHR {
+    _listeners: Record<string, Array<() => void>> = {};
+    open() {}
+    setRequestHeader() {}
+    send() {
+      this.status = 200;
+      this.responseType = '';
+      this.responseText = '{"ok":true}';
+      (this._listeners['load'] || []).forEach(fn => fn());
+      (this._listeners['loadend'] || []).forEach(fn => fn());
+    }
+    addEventListener(evt: string, cb: () => void) {
+      if (!this._listeners[evt]) this._listeners[evt] = [];
+      this._listeners[evt].push(cb);
+    }
+    status = 0;
+    responseType = '';
+    responseText = '';
+  }
+  const win: any = {
+    location: { href: 'https://example.com/' },
+    postMessage: (msg: any) => posted.push(msg),
+    fetch: async () => ({
+      status: 200,
+      clone() {
+        return { text: async () => '{"ok":true}' };
+      }
+    }),
+    XMLHttpRequest: MockXHR
+  };
+  win.window = win;
+  vm.runInNewContext(code, {
+    window: win,
+    URLSearchParams,
+    Headers: globalThis.Headers,
+    Request: undefined,
+    FormData: undefined,
+    Date,
+    setTimeout,
+    JSON,
+    Object,
+    String
+  });
+
+  await win.fetch('https://example.com/api/a', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer abc', 'X-Custom': '42' },
+    body: JSON.stringify({ x: 1 })
+  });
+  const xhr = new win.XMLHttpRequest();
+  xhr.open('POST', 'https://example.com/api/b');
+  xhr.setRequestHeader('X-CSRF-Token', 'csrf-99');
+  xhr.send('a=1&b=2');
+  await new Promise(r => setTimeout(r, 20));
+
+  assert.equal(posted.length, 2);
+  assert.equal(posted[0].entry.requestHeaders.authorization || posted[0].entry.requestHeaders.Authorization, 'Bearer abc');
+  assert.equal(posted[1].entry.requestHeaders['X-CSRF-Token'], 'csrf-99');
+});
+
+test('content script scans canvas edges to locate slider puzzle gap', () => {
+  const page = content('<div class="slider-track"><canvas class="geetest_canvas_bg" id="bg" width="300" height="150"></canvas><div class="btn_slide">>></div></div>');
+  const canvas = page.window.document.getElementById('bg');
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 300, height: 150, right: 300, bottom: 150 });
+  const data = new Uint8ClampedArray(300 * 150 * 4);
+  for (let y = 0; y < 150; y++) {
+    for (let x = 0; x < 300; x++) {
+      const idx = (y * 300 + x) * 4;
+      // Draw a sharp high-contrast 40x40 puzzle gap around x=[170..210], y=[40..80]
+      const inGap = x >= 170 && x <= 210 && y >= 40 && y <= 80;
+      const v = inGap ? 240 : 40;
+      data[idx] = v;
+      data[idx + 1] = v;
+      data[idx + 2] = v;
+      data[idx + 3] = 255;
+    }
+  }
+  canvas.getContext = () => ({
+    getImageData: () => ({ data, width: 300, height: 150 })
+  });
+
+  const gapRes = page.call('DETECT_SLIDER_GAP');
+  assert.equal(gapRes.success, true);
+  assert.equal(gapRes.detection_type, 'puzzle_gap');
+  assert.equal(gapRes.detection_method, 'pixel_edge_scan');
+  assert.ok(gapRes.distance_x >= 150 && gapRes.distance_x <= 220, `expected distance_x on puzzle edge [150..220], got ${gapRes.distance_x}`);
 });

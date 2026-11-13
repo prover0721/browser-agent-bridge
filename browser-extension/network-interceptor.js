@@ -168,6 +168,25 @@
     }
   } catch {}
 
+  function normalizeHeaders(raw) {
+    const out = {};
+    if (!raw) return out;
+    try {
+      if (typeof Headers !== 'undefined' && raw instanceof Headers) {
+        raw.forEach((v, k) => { out[k] = v; });
+      } else if (Array.isArray(raw)) {
+        for (const pair of raw) {
+          if (Array.isArray(pair) && pair.length >= 2) out[String(pair[0])] = String(pair[1]);
+        }
+      } else if (typeof raw === 'object') {
+        for (const [k, v] of Object.entries(raw)) {
+          if (v !== undefined && v !== null) out[k] = String(v);
+        }
+      }
+    } catch {}
+    return out;
+  }
+
   // 1. Hook window.fetch
   if (typeof window.fetch === 'function') {
     const originalFetch = window.fetch;
@@ -176,6 +195,7 @@
       let url = '';
       let method = 'GET';
       let requestBody = null;
+      let requestHeaders = {};
 
       try {
         const input = args[0];
@@ -185,10 +205,13 @@
         } else if (input && typeof input === 'object' && input.url) {
           url = input.url;
           method = input.method || 'GET';
+          if (input.headers) requestHeaders = normalizeHeaders(input.headers);
         }
         if (init.method) method = init.method;
-        if (init.body) {
-          if (typeof init.body === 'string') requestBody = init.body.slice(0, 1000);
+        if (init.headers) requestHeaders = { ...requestHeaders, ...normalizeHeaders(init.headers) };
+        if (init.body !== undefined && init.body !== null) {
+          if (typeof init.body === 'string') requestBody = init.body.slice(0, 10000);
+          else if (typeof URLSearchParams !== 'undefined' && init.body instanceof URLSearchParams) requestBody = init.body.toString().slice(0, 10000);
           else requestBody = '[Body Object]';
         }
       } catch {}
@@ -215,6 +238,7 @@
             url,
             method: method.toUpperCase(),
             status,
+            requestHeaders,
             requestBody,
             responseBody,
             durationMs,
@@ -227,6 +251,7 @@
             url,
             method: method.toUpperCase(),
             status,
+            requestHeaders,
             requestBody,
             responseBody: '[Stream / Binary]',
             durationMs,
@@ -242,6 +267,7 @@
           url,
           method: method.toUpperCase(),
           status: 0,
+          requestHeaders,
           error: err.message,
           durationMs: Date.now() - startTime,
           timestamp: startTime
@@ -257,19 +283,31 @@
     const proto = OriginalXHR.prototype;
     const origOpen = proto.open;
     const origSend = proto.send;
+    const origSetHeader = proto.setRequestHeader;
 
     proto.open = function (method, url, ...rest) {
       this.__ba_info = {
         method: (method || 'GET').toUpperCase(),
         url: typeof url === 'string' ? url : String(url),
+        requestHeaders: {},
         startTime: Date.now()
       };
       return origOpen.apply(this, [method, url, ...rest]);
     };
 
+    if (typeof origSetHeader === 'function') {
+      proto.setRequestHeader = function (name, value) {
+        if (this.__ba_info && name) {
+          this.__ba_info.requestHeaders[String(name)] = String(value);
+        }
+        return origSetHeader.apply(this, arguments);
+      };
+    }
+
     proto.send = function (body) {
       if (this.__ba_info) {
-        if (typeof body === 'string') this.__ba_info.requestBody = body.slice(0, 1000);
+        if (typeof body === 'string') this.__ba_info.requestBody = body.slice(0, 10000);
+        else if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) this.__ba_info.requestBody = body.toString().slice(0, 10000);
         else if (body) this.__ba_info.requestBody = '[Body Object]';
         
         this.addEventListener('loadend', () => {
@@ -293,6 +331,7 @@
               url: info.url,
               method: info.method,
               status: this.status,
+              requestHeaders: info.requestHeaders || {},
               requestBody: info.requestBody || null,
               responseBody,
               durationMs,

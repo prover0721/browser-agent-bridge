@@ -15,6 +15,30 @@
   // 敏感字段检测正则
   const SENSITIVE_REGEX = /password|pwd|cvv|cvc|cardnumber|creditcard|secret|token/i;
 
+  // ── 视口绝对坐标计算（自动叠加同源 iframe 嵌套偏移） ──
+  function getViewportRect(el) {
+    const rect = el.getBoundingClientRect();
+    let offsetLeft = 0;
+    let offsetTop = 0;
+    try {
+      let win = el.ownerDocument?.defaultView;
+      while (win && win !== window && win.frameElement) {
+        const frameRect = win.frameElement.getBoundingClientRect();
+        offsetLeft += frameRect.left;
+        offsetTop += frameRect.top;
+        win = win.parent;
+      }
+    } catch {}
+    return {
+      left: rect.left + offsetLeft,
+      top: rect.top + offsetTop,
+      right: rect.right + offsetLeft,
+      bottom: rect.bottom + offsetTop,
+      width: rect.width,
+      height: rect.height
+    };
+  }
+
   // ── SoM (Set-of-Marks) 视觉元素高亮标注覆盖层与映射表 ──
   const somMarksMap = new Map();
 
@@ -26,6 +50,32 @@
     return `${tag}${cls}`;
   }
 
+  function collectSomElements(doc, out) {
+    const selectors = [
+      'button', 'a[href]', 'input', 'textarea', 'select',
+      '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
+      '[role="tab"]', '[role="switch"]', '[contenteditable="true"]',
+      '[tabindex]:not([tabindex="-1"])'
+    ];
+    doc.querySelectorAll(selectors.join(',')).forEach(el => {
+      if (out.length < 120) out.push(el);
+    });
+    doc.querySelectorAll('div, span, li').forEach(el => {
+      if (out.length >= 120) return;
+      if (el.children.length === 0 && (el.onclick || window.getComputedStyle(el).cursor === 'pointer')) {
+        out.push(el);
+      }
+    });
+    // 穿透同源 iframe
+    doc.querySelectorAll('iframe').forEach(frame => {
+      try {
+        if (frame.contentDocument && out.length < 120) {
+          collectSomElements(frame.contentDocument, out);
+        }
+      } catch {}
+    });
+  }
+
   function enableSomMarks() {
     clearSomMarks();
     somMarksMap.clear();
@@ -34,21 +84,11 @@
     overlay.id = '__browser_agent_som_overlay__';
     overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:2147483647;overflow:hidden;';
 
-    const selectors = [
-      'button', 'a[href]', 'input', 'textarea', 'select',
-      '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
-      '[role="tab"]', '[role="switch"]', '[contenteditable="true"]',
-      '[tabindex]:not([tabindex="-1"])'
-    ];
-    const elements = Array.from(document.querySelectorAll(selectors.join(',')));
-    document.querySelectorAll('div, span, li').forEach(el => {
-      if (elements.length >= 80) return;
-      if (el.children.length === 0 && (el.onclick || window.getComputedStyle(el).cursor === 'pointer')) {
-        elements.push(el);
-      }
-    });
+    const elements = [];
+    collectSomElements(document, elements);
 
     const marks = [];
+    const placedBadges = [];
     let markId = 1;
     const vpW = window.innerWidth;
     const vpH = window.innerHeight;
@@ -56,7 +96,7 @@
     for (const el of elements) {
       if (markId > 80) break;
       if (!isElementVisible(el)) continue;
-      const rect = el.getBoundingClientRect();
+      const rect = getViewportRect(el);
       if (rect.width < 6 || rect.height < 6) continue;
       if (rect.right < 0 || rect.bottom < 0 || rect.left > vpW || rect.top > vpH) continue;
 
@@ -65,9 +105,19 @@
       const box = document.createElement('div');
       box.style.cssText = `position:absolute;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;border:1.5px solid #e11d48;background:rgba(225,29,72,0.06);box-sizing:border-box;pointer-events:none;`;
 
+      // 防重叠标签微调
+      let badgeLeft = Math.max(0, rect.left);
+      let badgeTop = Math.max(0, rect.top - 16);
+      for (const prev of placedBadges) {
+        if (Math.abs(badgeLeft - prev.left) < 22 && Math.abs(badgeTop - prev.top) < 16) {
+          badgeLeft = Math.min(vpW - 24, prev.left + 22);
+        }
+      }
+      placedBadges.push({ left: badgeLeft, top: badgeTop });
+
       const badge = document.createElement('span');
       badge.textContent = String(markId);
-      badge.style.cssText = `position:absolute;left:${Math.max(0, rect.left)}px;top:${Math.max(0, rect.top - 16)}px;background:#e11d48;color:#ffffff;font-size:11px;font-weight:bold;padding:0 4px;border-radius:2px;font-family:monospace;line-height:16px;box-shadow:0 1px 2px rgba(0,0,0,0.3);pointer-events:none;z-index:1;`;
+      badge.style.cssText = `position:absolute;left:${badgeLeft}px;top:${badgeTop}px;background:#e11d48;color:#ffffff;font-size:11px;font-weight:bold;padding:0 4px;border-radius:2px;font-family:monospace;line-height:16px;box-shadow:0 1px 2px rgba(0,0,0,0.3);pointer-events:none;z-index:1;`;
 
       overlay.appendChild(box);
       overlay.appendChild(badge);
@@ -95,6 +145,66 @@
   function clearSomMarks() {
     const existing = document.getElementById('__browser_agent_som_overlay__');
     if (existing) existing.remove();
+  }
+
+  // ── 像素级拼图缺口边缘扫描（垂直梯度 + 暗部轮廓联合评分） ──
+  function scanCanvasGapX(bgEl) {
+    try {
+      let canvas = null;
+      let w = 0;
+      let h = 0;
+      if (bgEl.tagName === 'CANVAS') {
+        canvas = bgEl;
+        w = canvas.width;
+        h = canvas.height;
+      } else if (bgEl.tagName === 'IMG' && bgEl.complete && bgEl.naturalWidth > 0) {
+        w = bgEl.naturalWidth;
+        h = bgEl.naturalHeight;
+        canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const tmpCtx = canvas.getContext('2d');
+        if (!tmpCtx) return null;
+        tmpCtx.drawImage(bgEl, 0, 0);
+      }
+      if (!canvas || w < 60 || h < 30) return null;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+
+      const imgData = ctx.getImageData(0, 0, w, h).data;
+      const startScan = Math.floor(w * 0.18);
+      const endScan = Math.floor(w * 0.88);
+      const yStart = Math.floor(h * 0.15);
+      const yEnd = Math.floor(h * 0.85);
+
+      let bestX = -1;
+      let bestScore = -1;
+
+      for (let x = startScan; x < endScan; x++) {
+        let edgeSum = 0;
+        let darkDrop = 0;
+        for (let y = yStart; y < yEnd; y++) {
+          const idx = (y * w + x) * 4;
+          const prevIdx = (y * w + (x - 2)) * 4;
+          const lum = 0.299 * imgData[idx] + 0.587 * imgData[idx + 1] + 0.114 * imgData[idx + 2];
+          const prevLum = 0.299 * imgData[prevIdx] + 0.587 * imgData[prevIdx + 1] + 0.114 * imgData[prevIdx + 2];
+          const diff = prevLum - lum;
+          edgeSum += Math.abs(diff);
+          if (diff > 18) darkDrop += diff;
+        }
+        const score = edgeSum * 0.4 + darkDrop * 0.6;
+        if (score > bestScore) {
+          bestScore = score;
+          bestX = x;
+        }
+      }
+
+      if (bestX > 0 && bestScore > (yEnd - yStart) * 12) {
+        const bgRect = getViewportRect(bgEl);
+        return Math.round(bestX * (bgRect.width / w));
+      }
+    } catch {}
+    return null;
   }
 
   // ── 滑块验证码缺口与轨道智能识别 ──
@@ -131,14 +241,14 @@
 
     if (!sliderEl) return { success: false, error: '未在页面上找到滑块按钮控件' };
 
-    const sliderRect = sliderEl.getBoundingClientRect();
+    const sliderRect = getViewportRect(sliderEl);
     const startX = Math.round(sliderRect.left + sliderRect.width / 2);
     const startY = Math.round(sliderRect.top + sliderRect.height / 2);
 
     let trackEl = null;
     let parent = sliderEl.parentElement;
     for (let i = 0; i < 4 && parent; i++) {
-      const pRect = parent.getBoundingClientRect();
+      const pRect = getViewportRect(parent);
       if (pRect.width > sliderRect.width + 60) {
         trackEl = parent;
         break;
@@ -166,23 +276,34 @@
 
     let targetDistance = 0;
     let detectionType = 'track_full';
+    let detectionMethod = 'track_width';
 
     if (bgEl) {
-      const bgRect = bgEl.getBoundingClientRect();
-      targetDistance = Math.round(bgRect.width * 0.65);
+      const bgRect = getViewportRect(bgEl);
       detectionType = 'puzzle_gap';
+      const scannedX = scanCanvasGapX(bgEl);
+      if (scannedX !== null && scannedX > 15) {
+        targetDistance = scannedX;
+        detectionMethod = 'pixel_edge_scan';
+      } else {
+        targetDistance = Math.round(bgRect.width * 0.65);
+        detectionMethod = 'heuristic_fallback';
+      }
     }
 
     if (detectionType === 'track_full' && trackEl) {
-      const trackRect = trackEl.getBoundingClientRect();
+      const trackRect = getViewportRect(trackEl);
       targetDistance = Math.round(trackRect.width - sliderRect.width + 4);
+      detectionMethod = 'track_width';
     } else if (targetDistance === 0) {
       targetDistance = 280;
+      detectionMethod = 'default_fallback';
     }
 
     return {
       success: true,
       detection_type: detectionType,
+      detection_method: detectionMethod,
       start_x: startX,
       start_y: startY,
       end_x: startX + targetDistance,
@@ -798,8 +919,8 @@
 
     if (markId !== undefined && markId !== null) {
       el = somMarksMap.get(Number(markId));
-      if (!el) {
-        return { success: false, error: `未找到编号为 [#${markId}] 的标注元素，请重新调用 browser_screenshot(annotate: true)` };
+      if (!el || !el.isConnected) {
+        return { success: false, error: `标注 [#${markId}] 不存在或页面已更新（元素已从 DOM 移除），请重新调用 browser_screenshot(annotate: true)` };
       }
     } else if (id !== undefined && id !== null) {
       el = elementMap.get(Number(id));
@@ -1905,6 +2026,10 @@
         let el = null;
         if (payload?.mark_id !== undefined && payload?.mark_id !== null) {
           el = somMarksMap.get(Number(payload.mark_id));
+          if (!el || !el.isConnected) {
+            sendResponse({ success: false, error: `标注 [#${payload.mark_id}] 不存在或页面已更新（元素已从 DOM 移除），请重新调用 browser_screenshot(annotate: true)` });
+            break;
+          }
         } else if (payload?.element_id !== undefined && payload?.element_id !== null) {
           el = elementMap.get(Number(payload.element_id));
         } else if (payload?.selector) {
@@ -1947,7 +2072,7 @@
           sendResponse({ success: false, error: '未找到指定元素' });
           break;
         }
-        const rect = el.getBoundingClientRect();
+        const rect = getViewportRect(el);
         let trackWidth = null;
         let parent = el.parentElement;
         for (let i = 0; i < 4 && parent; i++) {
