@@ -17,6 +17,115 @@ const cdpDetachTimers = new Map();
 const keepAliveTabs = new Set();
 let keepAliveTimer = null;
 
+// ── 2.3 防风控中心：同域名节流、重复导航去重、只读短缓存与 429 熔断冷却 ──
+const rateLimitConfig = {
+  minIntervalMs: 800,
+  jitterMs: 400,
+  maxRpm: 20,
+  autoCooldownOn429: true,
+  cooldownDurationMs: 45000
+};
+const domainRequestHistory = new Map(); // hostname -> { lastNavAt: number, timestamps: number[] }
+const domainCooldowns = new Map();      // hostname -> { until: number, reason: string }
+const readCache = new Map();            // `${tabId}:${method}:${key}` -> { ts: number, result: any }
+const READ_CACHE_TTL_MS = 2500;
+
+function extractHostname(url) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function invalidateTabReadCache(tabId) {
+  if (!tabId) return;
+  const prefix = `${tabId}:`;
+  for (const key of readCache.keys()) {
+    if (key.startsWith(prefix)) readCache.delete(key);
+  }
+}
+
+function tripDomainCooldown(hostname, reason) {
+  if (!hostname || !rateLimitConfig.autoCooldownOn429) return null;
+  const until = Date.now() + rateLimitConfig.cooldownDurationMs;
+  const entry = { until, reason };
+  domainCooldowns.set(hostname, entry);
+  return entry;
+}
+
+async function enforceDomainRateLimit(url) {
+  const hostname = extractHostname(url);
+  if (!hostname) return null;
+
+  const now = Date.now();
+  const cooldown = domainCooldowns.get(hostname);
+  if (cooldown) {
+    if (now < cooldown.until) {
+      const remainSec = Math.max(1, Math.ceil((cooldown.until - now) / 1000));
+      return {
+        error: `[风控熔断保护]: 域名 ${hostname} 触发限流/反爬保护 (${cooldown.reason})，当前处于冷却期（剩余 ${remainSec}s）。请暂停高频请求或人工完成验证后调用 browser_set_guard({ clear_cooldown: "${hostname}" }) 解除。`
+      };
+    }
+    domainCooldowns.delete(hostname);
+  }
+
+  let hist = domainRequestHistory.get(hostname);
+  if (!hist) {
+    hist = { lastNavAt: 0, timestamps: [] };
+    domainRequestHistory.set(hostname, hist);
+  }
+
+  hist.timestamps = hist.timestamps.filter(ts => now - ts < 60000);
+  if (rateLimitConfig.maxRpm > 0 && hist.timestamps.length >= rateLimitConfig.maxRpm) {
+    return {
+      error: `[风控节流保护]: 域名 ${hostname} 最近 60 秒内导航/建页次数已达上限 (${rateLimitConfig.maxRpm} 次/分钟)，已自动拦截以防触发网站风控。请稍后再试或优先复用当前已打开标签页。`
+    };
+  }
+
+  if (rateLimitConfig.minIntervalMs > 0 && hist.lastNavAt > 0) {
+    const elapsed = now - hist.lastNavAt;
+    if (elapsed < rateLimitConfig.minIntervalMs) {
+      const jitter = rateLimitConfig.jitterMs > 0 ? Math.floor(Math.random() * (rateLimitConfig.jitterMs + 1)) : 0;
+      const waitMs = (rateLimitConfig.minIntervalMs - elapsed) + jitter;
+      await new Promise(r => setTimeout(r, waitMs));
+    }
+  }
+
+  const recordTime = Date.now();
+  hist.lastNavAt = recordTime;
+  hist.timestamps.push(recordTime);
+  return null;
+}
+
+async function checkAndTripRiskSignals(tabId, url, title) {
+  const hostname = extractHostname(url);
+  if (!hostname || !rateLimitConfig.autoCooldownOn429) return null;
+
+  const lowerTitle = String(title || '').toLowerCase();
+  if (
+    lowerTitle.includes('429 too many requests') ||
+    lowerTitle.includes('attention required! | cloudflare') ||
+    lowerTitle.includes('just a moment...')
+  ) {
+    tripDomainCooldown(hostname, `页面命中风控拦截特征: "${title}"`);
+    return `检测到疑似风控/限流页面 (${title})，已自动为 ${hostname} 开启 ${Math.round(rateLimitConfig.cooldownDurationMs / 1000)}s 熔断冷却。`;
+  }
+
+  try {
+    const logRes = await chrome.tabs.sendMessage(tabId, { action: 'GET_NETWORK_LOGS', payload: { limit: 15 } }).catch(() => null);
+    if (logRes?.success && Array.isArray(logRes.logs)) {
+      const now = Date.now();
+      const hit429 = logRes.logs.find(l => l.status === 429 && (!l.timestamp || now - l.timestamp < 15000));
+      if (hit429) {
+        tripDomainCooldown(hostname, `接口返回 HTTP 429 (${hit429.url})`);
+        return `检测到接口返回 HTTP 429 Too Many Requests，已自动为 ${hostname} 开启 ${Math.round(rateLimitConfig.cooldownDurationMs / 1000)}s 熔断冷却。`;
+      }
+    }
+  } catch {}
+  return null;
+}
+
 // ── CDP Debugger 智能脱钩与物理级真机受信任输入模拟（isTrusted === true） ──
 function scheduleCdpDetach(tabId) {
   // 若当前标签页处于后台保活模式，绝对不脱钩，永久阻断 Edge Sleeping Tabs 冻结
@@ -715,6 +824,9 @@ async function handleBridgeCommand(method, params) {
     let url = params.url;
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
 
+    const rateLimitErr = await enforceDomainRateLimit(url);
+    if (rateLimitErr) return rateLimitErr;
+
     const makeActive = params.active === true;
     const isolateWindow = params.isolate_window !== false; // 默认隔离到 AI 专属独立窗口
 
@@ -1220,17 +1332,69 @@ async function handleBridgeCommand(method, params) {
     }
   }
 
-  // ── 2.0 任务安全护栏与域名白名单 ──
+  // ── 2.0 任务安全护栏与域名白名单 + 2.3 防风控节流配置 ──
   if (method === 'browser_set_guard') {
-    if (params.domain_lock) {
-      domainLock = Array.isArray(params.domain_lock) ? params.domain_lock : [params.domain_lock];
-    } else {
+    const hasRateParams =
+      params.min_interval_ms !== undefined ||
+      params.jitter_ms !== undefined ||
+      params.max_rpm !== undefined ||
+      params.auto_cooldown_on_429 !== undefined ||
+      params.cooldown_duration_ms !== undefined ||
+      params.clear_cooldown !== undefined;
+
+    if (params.domain_lock !== undefined) {
+      if (params.domain_lock && (!Array.isArray(params.domain_lock) || params.domain_lock.length > 0)) {
+        domainLock = Array.isArray(params.domain_lock) ? params.domain_lock : [params.domain_lock];
+      } else {
+        domainLock = null;
+      }
+    } else if (!hasRateParams) {
       domainLock = null;
     }
+
+    if (typeof params.min_interval_ms === 'number' && params.min_interval_ms >= 0) {
+      rateLimitConfig.minIntervalMs = params.min_interval_ms;
+    }
+    if (typeof params.jitter_ms === 'number' && params.jitter_ms >= 0) {
+      rateLimitConfig.jitterMs = params.jitter_ms;
+    }
+    if (typeof params.max_rpm === 'number' && params.max_rpm >= 0) {
+      rateLimitConfig.maxRpm = params.max_rpm;
+    }
+    if (typeof params.auto_cooldown_on_429 === 'boolean') {
+      rateLimitConfig.autoCooldownOn429 = params.auto_cooldown_on_429;
+    }
+    if (typeof params.cooldown_duration_ms === 'number' && params.cooldown_duration_ms >= 1000) {
+      rateLimitConfig.cooldownDurationMs = params.cooldown_duration_ms;
+    }
+    if (params.clear_cooldown === true) {
+      domainCooldowns.clear();
+    } else if (typeof params.clear_cooldown === 'string' && params.clear_cooldown.trim()) {
+      domainCooldowns.delete(params.clear_cooldown.trim().toLowerCase());
+    }
+
+    const activeCooldowns = {};
+    const now = Date.now();
+    for (const [host, entry] of domainCooldowns.entries()) {
+      if (now < entry.until) {
+        activeCooldowns[host] = { remaining_seconds: Math.ceil((entry.until - now) / 1000), reason: entry.reason };
+      } else {
+        domainCooldowns.delete(host);
+      }
+    }
+
     return {
       result: {
         domain_lock: domainLock,
-        message: `安全护栏已生效，受控域名白名单: ${domainLock ? domainLock.join(', ') : '无限制'}`
+        rate_limit: {
+          min_interval_ms: rateLimitConfig.minIntervalMs,
+          jitter_ms: rateLimitConfig.jitterMs,
+          max_rpm: rateLimitConfig.maxRpm,
+          auto_cooldown_on_429: rateLimitConfig.autoCooldownOn429,
+          cooldown_duration_ms: rateLimitConfig.cooldownDurationMs
+        },
+        active_cooldowns: activeCooldowns,
+        message: `安全护栏与防风控策略已生效，受控域名白名单: ${domainLock ? domainLock.join(', ') : '无限制'}，同域最小间隔: ${rateLimitConfig.minIntervalMs}ms，每分钟上限: ${rateLimitConfig.maxRpm || '不限'}`
       }
     };
   }
@@ -1496,14 +1660,63 @@ async function handleBridgeCommand(method, params) {
         }
       } catch {}
     }
+
+    const norm = u => String(u || '').split('#')[0].replace(/\/+$/, '');
+    if (params.reload !== true && targetTab.url && norm(targetTab.url) === norm(url) && targetTab.status === 'complete') {
+      return {
+        result: {
+          tab_id: targetTab.id,
+          window_id: targetTab.windowId,
+          url: targetTab.url,
+          title: targetTab.title,
+          is_ai_window: targetTab.windowId === aiWindowId,
+          deduplicated: true,
+          message: `标签页 [${targetTab.id}] 已停留在目标网址且页面就绪，已自动复用当前页免重复刷新防风控（如需强刷请传 reload: true）`
+        }
+      };
+    }
+
+    const rateLimitErr = await enforceDomainRateLimit(url);
+    if (rateLimitErr) return rateLimitErr;
+
+    invalidateTabReadCache(targetTab.id);
     await chrome.tabs.update(targetTab.id, { url });
     await waitForTabReady(targetTab.id);
     const loaded = await chrome.tabs.get(targetTab.id);
-    return { result: { tab_id: loaded.id, window_id: loaded.windowId, url: loaded.url, title: loaded.title, is_ai_window: loaded.windowId === aiWindowId, message: `标签页 [${targetTab.id}] 已跳转至: ${url}` } };
+    const riskWarning = await checkAndTripRiskSignals(loaded.id, loaded.url || url, loaded.title);
+    return {
+      result: {
+        tab_id: loaded.id,
+        window_id: loaded.windowId,
+        url: loaded.url,
+        title: loaded.title,
+        is_ai_window: loaded.windowId === aiWindowId,
+        ...(riskWarning ? { risk_warning: riskWarning } : {}),
+        message: `标签页 [${targetTab.id}] 已跳转至: ${url}`
+      }
+    };
   }
 
   // ── 3. 派发给 Content Script 的 DOM 操作 ──
   try {
+    if (mutations.includes(method) || ['browser_go_back', 'browser_go_forward', 'browser_reload'].includes(method)) {
+      invalidateTabReadCache(targetTab.id);
+    }
+
+    const isCacheableRead =
+      (method === 'browser_get_text' && params.force_refresh !== true) ||
+      (method === 'browser_snapshot' && params.diff_only !== true && params.force_refresh !== true);
+    const readCacheKey = isCacheableRead
+      ? `${targetTab.id}:${method}:${JSON.stringify({ id: params.element_id, v: params.viewport_only, m: params.max_elements, ig: params.ignore_dialog })}`
+      : null;
+
+    if (readCacheKey) {
+      const cached = readCache.get(readCacheKey);
+      if (cached && Date.now() - cached.ts < READ_CACHE_TTL_MS) {
+        return { result: cached.result };
+      }
+    }
+
     await ensureContentScriptInjected(targetTab.id);
 
     let action = '';
@@ -1740,7 +1953,11 @@ async function handleBridgeCommand(method, params) {
       return { error: response?.error || '操作执行失败' };
     }
 
-    return { result: response.data ?? response.text ?? response.message ?? '操作成功' };
+    const finalResult = response.data ?? response.text ?? response.message ?? '操作成功';
+    if (readCacheKey) {
+      readCache.set(readCacheKey, { ts: Date.now(), result: finalResult });
+    }
+    return { result: finalResult };
   } catch (err) {
     return { error: `执行失败 (${method} on Tab ${targetTab.id}): ${err.message}` };
   }

@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -10,7 +10,21 @@
 
 </div>
 
-Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to your active Chrome/Edge browser via a local Model Context Protocol (MCP) server and Manifest V3 extension. Enables low-latency, zero-screenshot browser automation, full-page DOM inspection, automated file uploading, and authenticated session reuse.
+Connect AI Agents (Antigravity, ChatGPT/Codex, Claude Code, Cursor, etc.) to your active Chrome/Edge browser via a local Model Context Protocol (MCP) server and Manifest V3 extension. Enables low-latency, zero-screenshot browser automation, full-page DOM inspection, automated file uploading, and **zero-friction reuse of your real browser's authenticated sessions and cookies**.
+
+## Why Browser Agent Bridge (vs. Built-in Sandboxed Browsers)
+
+- **Zero-Friction Authenticated Session Reuse**: Controls your daily Chrome/Edge profile directly, inheriting existing cookies, LocalStorage, IndexedDB, extensions, and bookmarks—no repeated QR scans, SMS codes, or "new device" login blocks.
+- **Authentic Desktop Browser Fingerprint**: Runs inside your real desktop browser with CDP `isTrusted: true` events, stealth spoofing, and per-domain rate-limiting/cooldown protection to avoid triggering anti-bot defenses.
+- **Seamless Human-in-the-Loop**: When a site requires manual 2FA, payment, or strict verification, you can step in on the exact same tab and let the AI resume immediately.
+- **Isolated AI Work Window**: Background automation runs silently in a dedicated AI window without stealing focus or disrupting your main browsing tabs.
+
+## Typical Use Cases
+
+- **Job Hunting & Bulk Applications**: Filter postings, send rich-text greetings, unlock custom read-only datepickers, and fill multi-page application forms on logged-in portals.
+- **Internal Enterprise & Back-Office Automation**: Automate queries, form entry, and report downloads on authenticated admin dashboards, OA systems, and e-commerce backends.
+- **Authenticated Research & API Extraction**: Extract content from logged-in communities/databases and export captured requests into ready-to-run cURL / Node.js / Python scripts via `browser_export_api_request` to avoid repetitive UI paging.
+- **Long-Running Background Tasks**: Built-in CDP immunity and MV3 Offscreen keep-alive prevent browser tab sleeping during extended workflows.
 
 ## Requirements
 

@@ -1027,3 +1027,48 @@ test('content script scans canvas edges to locate slider puzzle gap', () => {
   assert.equal(gapRes.detection_method, 'pixel_edge_scan');
   assert.ok(gapRes.distance_x >= 150 && gapRes.distance_x <= 220, `expected distance_x on puzzle edge [150..220], got ${gapRes.distance_x}`);
 });
+
+test('browser_navigate deduplicates same-URL navigation unless reload is true', async () => {
+  const ext = background();
+  await ext.call('browser_set_guard', { min_interval_ms: 0, jitter_ms: 0 });
+  const first = await ext.call('browser_navigate', { url: 'https://dedup.example.com/list' });
+  assert.ok(first.result?.tab_id);
+
+  const second = await ext.call('browser_navigate', { tab_id: first.result.tab_id, url: 'https://dedup.example.com/list' });
+  assert.equal(second.result.deduplicated, true);
+
+  const forced = await ext.call('browser_navigate', { tab_id: first.result.tab_id, url: 'https://dedup.example.com/list', reload: true });
+  assert.equal(forced.result.deduplicated, undefined);
+});
+
+test('browser_set_guard enforces max_rpm rate limit on same domain', async () => {
+  const ext = background();
+  const guardRes = await ext.call('browser_set_guard', { min_interval_ms: 0, jitter_ms: 0, max_rpm: 2 });
+  assert.equal(guardRes.result.rate_limit.max_rpm, 2);
+
+  const r1 = await ext.call('browser_navigate', { url: 'https://ratelimit.example.com/p1' });
+  assert.ok(r1.result?.tab_id);
+  const r2 = await ext.call('browser_navigate', { tab_id: r1.result.tab_id, url: 'https://ratelimit.example.com/p2' });
+  assert.ok(r2.result?.tab_id);
+
+  const r3 = await ext.call('browser_navigate', { tab_id: r1.result.tab_id, url: 'https://ratelimit.example.com/p3' });
+  assert.ok(r3.error);
+  assert.match(r3.error, /风控节流保护/);
+});
+
+test('browser_get_text uses short-TTL read cache and invalidates on mutation', async () => {
+  const ext = background();
+  const first = await ext.call('browser_get_text', { tab_id: 1 });
+  assert.ok(first.result);
+  const callsAfterFirst = ext.domCalls.filter(c => c.action === 'GET_TEXT').length;
+
+  const second = await ext.call('browser_get_text', { tab_id: 1 });
+  assert.ok(second.result);
+  const callsAfterSecond = ext.domCalls.filter(c => c.action === 'GET_TEXT').length;
+  assert.equal(callsAfterSecond, callsAfterFirst);
+
+  await ext.call('browser_click', { tab_id: 1, element_id: 1 });
+  await ext.call('browser_get_text', { tab_id: 1 });
+  const callsAfterMutation = ext.domCalls.filter(c => c.action === 'GET_TEXT').length;
+  assert.equal(callsAfterMutation, callsAfterFirst + 1);
+});

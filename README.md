@@ -2,7 +2,7 @@
 
 # 🌐 Browser Agent Bridge
 
-[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
+[![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)](https://github.com/prover0721/browser-agent-bridge)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -10,7 +10,23 @@
 
 </div>
 
-通过本地 MCP 服务和 Chrome / Edge MV3 扩展，让 AI 读取网页、管理标签页、点击和填写表单、全自动文件上传，并复用浏览器现有登录态。
+通过本地 MCP 服务和 Chrome / Edge MV3 扩展，让 AI 读取网页、管理标签页、点击和填写表单、全自动文件上传，并**零门槛复用你日常浏览器的真实登录态与指纹环境**。
+
+## 核心优势（为什么直接控制你的真实浏览器）
+
+相比 AI Agent 自带的隔离无头/内置浏览器，直接连接你正在使用的 Chrome / Edge 具有天然优势：
+
+- **免登录复用真实 Cookie 与会话**：无需在沙盒浏览器里重新扫码、收短信验证码或触发异地登录风控，直接继承你已登录的 Cookie、LocalStorage、IndexedDB、扩展插件与书签。
+- **真实桌面浏览器指纹**：运行在真实桌面浏览器与 CDP 受信任事件通道下（`isTrusted: true`），叠加 Stealth 伪装与同域名防风控节流，比无头浏览器更不易被反爬系统拦截。
+- **人机无缝接管**：遇到极高安全等级的实名/短信/支付校验时，你可直接在同一标签页手动完成一步确认，AI 紧接着继续后续流程。
+- **AI 专属窗口物理隔离**：默认在独立的 AI 工作窗口中静默执行跳转与操作，不抢焦点、不干扰你正在浏览的主窗口。
+
+## 典型应用场景
+
+- **招聘求职与批量投递**：在已登录的 BOSS 直聘、应届生网等平台自动筛选岗位、富文本打招呼、解锁只读日历并批量填写网申表单。
+- **办公与强登录态内部系统自动化**：企业后台、OA、教务、电商运营后台等复杂登录态系统的批量查询、表单录入与报表下载。
+- **登录态内容检索与 API 直连提炼**：社区/知识库/专业数据库的信息提取，配合请求嗅探与 `browser_export_api_request` 一键导出 cURL / Node / Python 脚本，避免反复翻页触发页面风控。
+- **后台长时挂机与多工具协同**：内置后台防休眠保活（CDP 免疫 + Offscreen 常驻），适合长时间挂机或配合嘉立创 EDA（`easyeda-agent`）等专业垂直插件协同工作。
 
 ## 环境要求
 
@@ -155,11 +171,26 @@ npm test
 npm audit
 ```
 
-全套 63 项测试覆盖后台防休眠持久保活（CDP 免疫/无声媒体流/唤醒锁/守护心跳/Offscreen 文档）、中继失败自愈与主控故障自动抢占提权（Relay-to-Master Failover）、SoM 视觉标注与编号盲操（含同源 iframe 遍历、标签避让与断连失效校验）、请求嗅探（含完整请求头捕获）一键转 cURL/Node/Python 直连、滑块缺口像素级边缘扫描与一键破盾、物理剪贴板粘贴注入（含原剪贴板内容无损备份与恢复）、拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 66 项测试覆盖同域名请求节流与 429 自动熔断、同 URL 导航去重与只读短缓存、后台防休眠持久保活（CDP 免疫/无声媒体流/唤醒锁/守护心跳/Offscreen 文档）、中继失败自愈与主控故障自动抢占提权（Relay-to-Master Failover）、SoM 视觉标注与编号盲操（含同源 iframe 遍历、标签避让与断连失效校验）、请求嗅探（含完整请求头捕获）一键转 cURL/Node/Python 直连、滑块缺口像素级边缘扫描与一键破盾、物理剪贴板粘贴注入（含原剪贴板内容无损备份与恢复）、拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。
 
 ## 项目交接与变更记录 (Handover & Changelog)
+
+### [2026-11-15 (v2.3.0)] 4 层防风控保护体系、版本对齐与核心优势文档化
+
+- **变更背景与目的**：
+  1. 明确项目核心定位：相比隔离无头/内置浏览器，直接操控用户真实浏览器可零成本复用已登录 Cookie 与真实指纹，避免反复登录与异地风控；
+  2. 解决 AI 短时间内高频请求/刷新同一网页触发目标站点限流与风控的问题；
+  3. 对齐扩展 `manifest.json`、服务端 `package.json`、`index.ts` 与中英文 `README` 的版本号至 `2.3.0`。
+- **修改文件清单**：
+  - `browser-extension/background.js`: 新增 4 层防风控引擎——① 同域名导航/建页最小冷却间隔 + 随机拟人抖动 + 每分钟上限 (`max_rpm`)；② 同 URL 重复导航自动去重复用（`deduplicated: true`，除非传 `reload: true`）；③ `browser_snapshot` / `browser_get_text` 2.5s 只读短缓存（写操作自动失效）；④ HTTP `429` / 风控拦截页自动触发域名熔断冷却及 `clear_cooldown` 解除。
+  - `bridge-server/src/index.ts`: 同步扩展 `browser_set_guard` 与 `browser_navigate` 参数 Schema，对齐 MCP Server 版本为 `2.3.0`。
+  - `browser-extension/manifest.json` & `bridge-server/package.json`: 统一版本号为 `2.3.0`。
+  - `bridge-server/tests/extension.test.ts`: 新增同 URL 导航去重、`max_rpm` 节流拦截、只读短缓存与写操作失效 3 项测试（全套 66 项测试 100% PASS）。
+  - `README.md` & `README_en.md`: 补充「核心优势」与「典型应用场景」章节，并对齐版本徽章至 `2.3.0`。
+- **后续交接/待办提示 (Next Steps)**：
+  - 如需在 Edge 中立即生效，请在 `edge://extensions/` 刷新扩展或调用 `browser_reload_extension`。
 
 ### [2026-11-13 (v2.2.1)] 细节鲁棒性全面加固：像素级滑块缺口扫描、真实请求头捕获、同源 iframe 校准、Watchdog 单实例与剪贴板无损恢复
 

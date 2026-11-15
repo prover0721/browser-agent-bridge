@@ -62,7 +62,7 @@ const MIME_MAP: Record<string, string> = {
 const server = new Server(
   {
     name: 'browser-agent-bridge',
-    version: '2.0.0',
+    version: '2.3.0',
   },
   {
     capabilities: {
@@ -700,7 +700,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'browser_navigate',
-    description: '后台自主导航：不传 tab_id 时，自动创建 AI 专用窗口或继续在已绑定的 AI 工作页跳转，不覆盖用户窗口。只有明确操作已有页面时才传 tab_id。',
+    description: '后台自主导航：不传 tab_id 时，自动创建 AI 专用窗口或继续在已绑定的 AI 工作页跳转，不覆盖用户窗口。若目标页已处于该 URL 且就绪，默认自动复用免重复刷新防风控。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -711,6 +711,10 @@ const TOOLS: Tool[] = [
         tab_id: {
           type: 'number',
           description: '可选：指定要在哪个标签页中跳转',
+        },
+        reload: {
+          type: 'boolean',
+          description: '可选：即使当前页已是目标 URL 也强制重新加载（默认 false，防重复刷新触发风控）',
         },
       },
       required: ['url'],
@@ -842,7 +846,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'browser_set_guard',
-    description: '【v2.0 任务安全护栏与沙箱】配置当前任务的受控域名白名单（如 ["zhipin.com", "yingjiesheng.com"]）。开启后插件将自动拦截外链推广、防止 Agent 误跳出任务域或误点外部退出链接。',
+    description: '【v2.3 任务安全护栏与防风控中心】配置受控域名白名单与同域名请求节流/熔断策略，防止高频访问同一网站触发风控。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -850,6 +854,30 @@ const TOOLS: Tool[] = [
           type: 'array',
           items: { type: 'string' },
           description: '受控域名白名单后缀列表，如 ["zhipin.com"]；传空数组或 null 表示解除锁定',
+        },
+        min_interval_ms: {
+          type: 'number',
+          description: '同域名页面导航最小冷却间隔（毫秒，默认 800；设为 0 可关闭）',
+        },
+        jitter_ms: {
+          type: 'number',
+          description: '同域名节流附加随机拟人抖动上限（毫秒，默认 400）',
+        },
+        max_rpm: {
+          type: 'number',
+          description: '同域名每分钟最大导航/建页次数（默认 20；设为 0 表示不限制）',
+        },
+        auto_cooldown_on_429: {
+          type: 'boolean',
+          description: '检测到 HTTP 429 或明确风控拦截页时是否自动触发域名熔断冷却（默认 true）',
+        },
+        cooldown_duration_ms: {
+          type: 'number',
+          description: '触发风控熔断后的冷却时长（毫秒，默认 45000）',
+        },
+        clear_cooldown: {
+          type: ['string', 'boolean'],
+          description: '解除风控熔断：传入具体域名（如 "zhipin.com"）解除该域名，或传 true 解除全部域名熔断',
         },
       },
       required: [],
