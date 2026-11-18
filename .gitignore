@@ -4,8 +4,10 @@ node_modules/
 # Build outputs (optional, can be built via npm run build)
 # dist/
 
-# Logs
+# Logs & runtime state
 *.log
+*.log.old
+*.pid
 npm-debug.log*
 
 # OS / Editor files

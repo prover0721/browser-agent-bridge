@@ -81,7 +81,8 @@ function startDaemon() {
     child = spawn(process.execPath, [SCRIPT_PATH], {
       cwd: BRIDGE_DIR,
       env: { ...process.env, BRIDGE_DAEMON: '1', BRIDGE_PORT: String(BRIDGE_PORT) },
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true
     });
 
     child.stdout?.on('data', data => log(`[STDOUT] ${data.toString().trim()}`));

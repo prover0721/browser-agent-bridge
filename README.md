@@ -177,6 +177,15 @@ npm audit
 
 ## 项目交接与变更记录 (Handover & Changelog)
 
+### [2026-11-18 (v2.3.1)] 守护进程静默隐藏防抢焦点与仓库运行态隔离
+
+- **变更背景与目的**：
+  1. `bridge-server/watchdog.js` 在 Windows 下重启后台子进程时未设置 `windowsHide: true`，可能引发控制台闪现或窗口焦点抢占；
+  2. `.gitignore` 未忽略 `*.pid` 与 `*.log.old`，导致 `bridge-server/watchdog.pid` 被误跟踪进 Git 仓库。
+- **修改文件清单**：
+  - `bridge-server/watchdog.js`: 为 `spawn(process.execPath, ...)` 增加 `windowsHide: true`，彻底避免子进程重启弹出控制台或抢占前台焦点。
+  - `.gitignore`: 新增 `*.pid` 与 `*.log.old` 忽略规则，并从 Git 索引移除 `bridge-server/watchdog.pid`（保留本地运行态文件）。
+
 ### [2026-11-15 (v2.3.0)] 4 层防风控保护体系、版本对齐与核心优势文档化
 
 - **变更背景与目的**：
