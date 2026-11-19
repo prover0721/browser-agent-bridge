@@ -1342,11 +1342,47 @@ async function handleBridgeCommand(method, params) {
   }
 
   if (method === 'browser_reload') {
-    const targetTab = await resolveTargetTab(params.tab_id);
+    let targetTab = null;
+    if (!params.tab_id && (params.url_pattern || params.title_pattern)) {
+      const allTabs = await chrome.tabs.query({}).catch(() => []);
+      const matchPattern = (text, pattern) => {
+        const str = String(text || '');
+        try {
+          return new RegExp(pattern, 'i').test(str);
+        } catch {
+          return str.toLowerCase().includes(String(pattern).toLowerCase());
+        }
+      };
+      targetTab = allTabs.find(t => {
+        if (params.url_pattern && !matchPattern(t.url, params.url_pattern)) return false;
+        if (params.title_pattern && !matchPattern(t.title, params.title_pattern)) return false;
+        return true;
+      }) || null;
+      if (!targetTab) {
+        return { error: `未找到匹配条件的标签页 (url_pattern=${params.url_pattern || ''}, title_pattern=${params.title_pattern || ''})` };
+      }
+    } else {
+      targetTab = await resolveTargetTab(params.tab_id);
+    }
     if (!targetTab || !targetTab.id) return { error: '未找到受控标签页' };
     try {
+      invalidateTabReadCache(targetTab.id);
       await chrome.tabs.reload(targetTab.id, { bypassCache: params.bypass_cache === true });
-      return { result: { tab_id: targetTab.id, message: `标签页 [ID: ${targetTab.id}] 已刷新${params.bypass_cache === true ? ' (强制忽略缓存)' : ''}` } };
+      if (params.wait_ready !== false) {
+        targetTab = await waitForTabReady(targetTab.id);
+      }
+      if (params.keep_alive === true) {
+        await setTabKeepAlive(targetTab.id, true);
+      }
+      return {
+        result: {
+          tab_id: targetTab.id,
+          title: targetTab.title,
+          url: targetTab.url,
+          keep_alive: params.keep_alive === true,
+          message: `标签页 [ID: ${targetTab.id}] 已刷新${params.bypass_cache === true ? ' (强制忽略缓存)' : ''}${params.keep_alive === true ? ' 并已开启后台防休眠保活' : ''}`
+        }
+      };
     } catch (e) {
       return { error: `刷新失败: ${e.message}` };
     }

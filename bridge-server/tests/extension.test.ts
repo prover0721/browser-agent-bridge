@@ -1111,3 +1111,26 @@ test('content script forwards RISK_SIGNAL_429 to background on 429 network entry
   assert.equal(runtimeMessages[0].type, 'RISK_SIGNAL_429');
   assert.equal(runtimeMessages[0].status, 429);
 });
+
+test('browser_reload matches EasyEDA tab by url_pattern, waits ready, and enables keep_alive', async () => {
+  const ext = background();
+  const created = await ext.call('browser_create_tab', { url: 'https://pro.lceda.cn/editor', auto_bind: false });
+  assert.ok(created.result?.tab_id);
+
+  let reloadedId: number | null = null;
+  const origReload = ext.context.chrome.tabs.reload;
+  ext.context.chrome.tabs.reload = async (id: number, opts: any) => {
+    reloadedId = id;
+    return origReload(id, opts);
+  };
+
+  const reloadRes = await ext.call('browser_reload', {
+    url_pattern: 'lceda\\.cn|easyeda\\.com',
+    wait_ready: true,
+    keep_alive: true
+  });
+  assert.equal(reloadedId, created.result.tab_id);
+  assert.equal(reloadRes.result.tab_id, created.result.tab_id);
+  assert.equal(reloadRes.result.keep_alive, true);
+  assert.match(reloadRes.result.message, /保活/);
+});

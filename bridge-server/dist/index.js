@@ -457,7 +457,7 @@ const TOOLS = [
     },
     {
         name: 'browser_reload',
-        description: '重新加载刷新当前受控标签页（相当于点击浏览器刷新按钮）。',
+        description: '重新加载刷新指定或当前受控标签页（支持按 tab_id、url_pattern 或 title_pattern 精准定位后台网页如嘉立创 EDA，等待就绪并可选自动开启防休眠保活）。',
         inputSchema: {
             type: 'object',
             properties: {
@@ -468,6 +468,22 @@ const TOOLS = [
                 tab_id: {
                     type: 'number',
                     description: '可选：指定目标标签页 ID',
+                },
+                url_pattern: {
+                    type: 'string',
+                    description: '可选：按 URL 关键词或正则匹配后台标签页并刷新（如 "lceda.cn|easyeda.com"）',
+                },
+                title_pattern: {
+                    type: 'string',
+                    description: '可选：按页面标题关键词或正则匹配标签页并刷新（如 "嘉立创"）',
+                },
+                wait_ready: {
+                    type: 'boolean',
+                    description: '刷新后是否等待页面加载完成，默认为 true',
+                },
+                keep_alive: {
+                    type: 'boolean',
+                    description: '刷新完成后是否自动激活后台防休眠保活（推荐用于嘉立创 EDA 等长连接页面），默认为 false',
                 },
             },
             required: [],
