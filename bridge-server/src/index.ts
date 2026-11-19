@@ -867,6 +867,14 @@ const TOOLS: Tool[] = [
           type: 'number',
           description: '同域名每分钟最大导航/建页次数（默认 20；设为 0 表示不限制）',
         },
+        interaction_min_interval_ms: {
+          type: 'number',
+          description: '同域名 SPA 站内点击/滚动最小间隔（毫秒，默认 350；设为 0 可关闭）',
+        },
+        interaction_max_rpm: {
+          type: 'number',
+          description: '同域名 SPA 站内每分钟最大点击/滚动次数（默认 60；设为 0 表示不限制）',
+        },
         auto_cooldown_on_429: {
           type: 'boolean',
           description: '检测到 HTTP 429 或明确风控拦截页时是否自动触发域名熔断冷却（默认 true）',

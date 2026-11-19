@@ -1763,6 +1763,16 @@
       if (networkLogs.length > MAX_STORED_LOGS) {
         networkLogs.shift();
       }
+      if (event.data.entry.status === 429) {
+        try {
+          chrome.runtime.sendMessage({
+            type: 'RISK_SIGNAL_429',
+            url: event.data.entry.url || window.location.href,
+            pageUrl: window.location.href,
+            status: 429
+          }).catch(() => {});
+        } catch {}
+      }
     }
   });
 

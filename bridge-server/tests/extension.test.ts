@@ -1072,3 +1072,42 @@ test('browser_get_text uses short-TTL read cache and invalidates on mutation', a
   const callsAfterMutation = ext.domCalls.filter(c => c.action === 'GET_TEXT').length;
   assert.equal(callsAfterMutation, callsAfterFirst + 1);
 });
+
+test('browser_set_guard enforces interaction_max_rpm on SPA click and scroll', async () => {
+  const ext = background();
+  const guardRes = await ext.call('browser_set_guard', {
+    interaction_min_interval_ms: 0,
+    interaction_max_rpm: 2,
+    jitter_ms: 0
+  });
+  assert.equal(guardRes.result.rate_limit.interaction_max_rpm, 2);
+
+  const c1 = await ext.call('browser_click', { tab_id: 1, element_id: 1 });
+  assert.ok(c1.result);
+  const s1 = await ext.call('browser_scroll', { tab_id: 1, direction: 'down' });
+  assert.ok(s1.result);
+
+  const c2 = await ext.call('browser_click', { tab_id: 1, element_id: 1 });
+  assert.ok(c2.error);
+  assert.match(c2.error, /SPA 交互节流保护/);
+});
+
+test('content script forwards RISK_SIGNAL_429 to background on 429 network entry', () => {
+  const page = content('<div>SPA</div>');
+  const runtimeMessages: any[] = [];
+  page.window.chrome.runtime.sendMessage = (msg: any) => {
+    runtimeMessages.push(msg);
+    return Promise.resolve();
+  };
+
+  page.window.dispatchEvent(new page.window.MessageEvent('message', {
+    data: {
+      type: '__BROWSER_AGENT_NETWORK_LOG__',
+      entry: { url: 'https://example.com/api/page?p=9', status: 429, timestamp: Date.now() }
+    }
+  }));
+
+  assert.equal(runtimeMessages.length, 1);
+  assert.equal(runtimeMessages[0].type, 'RISK_SIGNAL_429');
+  assert.equal(runtimeMessages[0].status, 429);
+});

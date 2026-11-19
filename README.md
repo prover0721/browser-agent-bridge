@@ -171,11 +171,21 @@ npm test
 npm audit
 ```
 
-全套 66 项测试覆盖同域名请求节流与 429 自动熔断、同 URL 导航去重与只读短缓存、后台防休眠持久保活（CDP 免疫/无声媒体流/唤醒锁/守护心跳/Offscreen 文档）、中继失败自愈与主控故障自动抢占提权（Relay-to-Master Failover）、SoM 视觉标注与编号盲操（含同源 iframe 遍历、标签避让与断连失效校验）、请求嗅探（含完整请求头捕获）一键转 cURL/Node/Python 直连、滑块缺口像素级边缘扫描与一键破盾、物理剪贴板粘贴注入（含原剪贴板内容无损备份与恢复）、拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
+全套 68 项测试覆盖同域名请求节流与 429 自动熔断、SPA 站内高频交互节流与实时 429 感知、同 URL 导航去重与只读短缓存、后台防休眠持久保活（CDP 免疫/无声媒体流/唤醒锁/守护心跳/Offscreen 文档）、中继失败自愈与主控故障自动抢占提权（Relay-to-Master Failover）、SoM 视觉标注与编号盲操（含同源 iframe 遍历、标签避让与断连失效校验）、请求嗅探（含完整请求头捕获）一键转 cURL/Node/Python 直连、滑块缺口像素级边缘扫描与一键破盾、物理剪贴板粘贴注入（含原剪贴板内容无损备份与恢复）、拟人化物理拖拽与滑动验证码自动破解、Stealth 2.0 深度反爬指纹伪装、CDP 原生受信任输入与拟人化延迟、应届生网自定义日历只读绕过、即时动作反馈（Toast/校验拦截）、增量快照 diff、局部视觉裁切截图、AI 导航安全白名单护栏、后台渲染保活与无声时钟唤醒、弹窗严格过滤与穿透参数、标准桌面视口与静音保障、语义动作穿透与文字直达点击、本地下载路径追踪、网络接口嗅探、批量表单填充、历史导航、免 F12 获取 Cookies 与存储、扩展自动热重载与网页同步、React 动态 hover 浮层挂载与悬停透出、BOSS直聘富文本与复杂弹窗、Quill/WangEditor 段落保留与字数计数器同步、书签全量检索与直达、文件注入上传、Shadow DOM 遍历、活动弹窗分组、条件等待、后台独立窗口创建与复用、静默切页、自主导航、无令牌自动连接、会话绑定及过期快照。
 
 修改 TypeScript 后必须重新构建并同步提交。CI 在 Windows 和 Linux 检查编译、回归测试与编译产物一致性。
 
 ## 项目交接与变更记录 (Handover & Changelog)
+
+### [2026-11-19 (v2.3.2)] SPA 站内高频交互防风控与全域 429 实时感知
+
+- **变更背景与目的**：
+  此前节流与 429 检测主要作用于 `browser_navigate` / `browser_create_tab`，对单页应用（SPA）的站内“下一页”连环 `browser_click`、瀑布流 `browser_scroll` 以及交互后接口返回的 HTTP `429` 缺乏实时感知与拦截。
+- **修改文件清单**：
+  - `browser-extension/content.js`: 监听 `__BROWSER_AGENT_NETWORK_LOG__` 时若捕获 `status === 429`，立即通过 `chrome.runtime.sendMessage` 向后台上报 `RISK_SIGNAL_429`。
+  - `browser-extension/background.js`: 新增 `enforceInteractionRateLimit`（作用于 `browser_click` / `browser_scroll`，默认最小间隔 `350ms`、每分钟上限 `60` 次，且在域名熔断期自动阻断）；在 `browser_click`、`browser_scroll` 与 `browser_get_network_logs` 中挂载全域 429 检测并接收 `RISK_SIGNAL_429` 实时触发冷却。
+  - `bridge-server/src/index.ts`: 在 `browser_set_guard` 参数 Schema 中新增 `interaction_min_interval_ms` 与 `interaction_max_rpm`。
+  - `bridge-server/tests/extension.test.ts`: 新增 SPA `interaction_max_rpm` 节流拦截与 `RISK_SIGNAL_429` 实时上报 2 项单测（全套 68 项测试 100% PASS）。
 
 ### [2026-11-18 (v2.3.1)] 守护进程静默隐藏防抢焦点与仓库运行态隔离
 

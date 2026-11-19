@@ -22,11 +22,14 @@ const rateLimitConfig = {
   minIntervalMs: 800,
   jitterMs: 400,
   maxRpm: 20,
+  interactionMinIntervalMs: 350,
+  interactionMaxRpm: 60,
   autoCooldownOn429: true,
   cooldownDurationMs: 45000
 };
-const domainRequestHistory = new Map(); // hostname -> { lastNavAt: number, timestamps: number[] }
-const domainCooldowns = new Map();      // hostname -> { until: number, reason: string }
+const domainRequestHistory = new Map();     // hostname -> { lastNavAt: number, timestamps: number[] }
+const domainInteractionHistory = new Map(); // hostname -> { lastAt: number, timestamps: number[] }
+const domainCooldowns = new Map();          // hostname -> { until: number, reason: string }
 const readCache = new Map();            // `${tabId}:${method}:${key}` -> { ts: number, result: any }
 const READ_CACHE_TTL_MS = 2500;
 
@@ -94,6 +97,50 @@ async function enforceDomainRateLimit(url) {
 
   const recordTime = Date.now();
   hist.lastNavAt = recordTime;
+  hist.timestamps.push(recordTime);
+  return null;
+}
+
+async function enforceInteractionRateLimit(url) {
+  const hostname = extractHostname(url);
+  if (!hostname) return null;
+
+  const now = Date.now();
+  const cooldown = domainCooldowns.get(hostname);
+  if (cooldown) {
+    if (now < cooldown.until) {
+      const remainSec = Math.max(1, Math.ceil((cooldown.until - now) / 1000));
+      return {
+        error: `[风控熔断保护]: 域名 ${hostname} 触发限流/反爬保护 (${cooldown.reason})，当前处于冷却期（剩余 ${remainSec}s）。请暂停高频点击/滚动或人工完成验证后调用 browser_set_guard({ clear_cooldown: "${hostname}" }) 解除。`
+      };
+    }
+    domainCooldowns.delete(hostname);
+  }
+
+  let hist = domainInteractionHistory.get(hostname);
+  if (!hist) {
+    hist = { lastAt: 0, timestamps: [] };
+    domainInteractionHistory.set(hostname, hist);
+  }
+
+  hist.timestamps = hist.timestamps.filter(ts => now - ts < 60000);
+  if (rateLimitConfig.interactionMaxRpm > 0 && hist.timestamps.length >= rateLimitConfig.interactionMaxRpm) {
+    return {
+      error: `[SPA 交互节流保护]: 域名 ${hostname} 最近 60 秒内站内高频交互次数已达上限 (${rateLimitConfig.interactionMaxRpm} 次/分钟)，已自动拦截以防触发 SPA 翻页/接口风控。`
+    };
+  }
+
+  if (rateLimitConfig.interactionMinIntervalMs > 0 && hist.lastAt > 0) {
+    const elapsed = now - hist.lastAt;
+    if (elapsed < rateLimitConfig.interactionMinIntervalMs) {
+      const jitter = rateLimitConfig.jitterMs > 0 ? Math.floor(Math.random() * Math.min(250, rateLimitConfig.jitterMs + 1)) : 0;
+      const waitMs = (rateLimitConfig.interactionMinIntervalMs - elapsed) + jitter;
+      await new Promise(r => setTimeout(r, waitMs));
+    }
+  }
+
+  const recordTime = Date.now();
+  hist.lastAt = recordTime;
   hist.timestamps.push(recordTime);
   return null;
 }
@@ -1338,6 +1385,8 @@ async function handleBridgeCommand(method, params) {
       params.min_interval_ms !== undefined ||
       params.jitter_ms !== undefined ||
       params.max_rpm !== undefined ||
+      params.interaction_min_interval_ms !== undefined ||
+      params.interaction_max_rpm !== undefined ||
       params.auto_cooldown_on_429 !== undefined ||
       params.cooldown_duration_ms !== undefined ||
       params.clear_cooldown !== undefined;
@@ -1360,6 +1409,12 @@ async function handleBridgeCommand(method, params) {
     }
     if (typeof params.max_rpm === 'number' && params.max_rpm >= 0) {
       rateLimitConfig.maxRpm = params.max_rpm;
+    }
+    if (typeof params.interaction_min_interval_ms === 'number' && params.interaction_min_interval_ms >= 0) {
+      rateLimitConfig.interactionMinIntervalMs = params.interaction_min_interval_ms;
+    }
+    if (typeof params.interaction_max_rpm === 'number' && params.interaction_max_rpm >= 0) {
+      rateLimitConfig.interactionMaxRpm = params.interaction_max_rpm;
     }
     if (typeof params.auto_cooldown_on_429 === 'boolean') {
       rateLimitConfig.autoCooldownOn429 = params.auto_cooldown_on_429;
@@ -1390,6 +1445,8 @@ async function handleBridgeCommand(method, params) {
           min_interval_ms: rateLimitConfig.minIntervalMs,
           jitter_ms: rateLimitConfig.jitterMs,
           max_rpm: rateLimitConfig.maxRpm,
+          interaction_min_interval_ms: rateLimitConfig.interactionMinIntervalMs,
+          interaction_max_rpm: rateLimitConfig.interactionMaxRpm,
           auto_cooldown_on_429: rateLimitConfig.autoCooldownOn429,
           cooldown_duration_ms: rateLimitConfig.cooldownDurationMs
         },
@@ -1703,6 +1760,11 @@ async function handleBridgeCommand(method, params) {
       invalidateTabReadCache(targetTab.id);
     }
 
+    if (method === 'browser_click' || method === 'browser_scroll') {
+      const interactErr = await enforceInteractionRateLimit(targetTab.url);
+      if (interactErr) return interactErr;
+    }
+
     const isCacheableRead =
       (method === 'browser_get_text' && params.force_refresh !== true) ||
       (method === 'browser_snapshot' && params.diff_only !== true && params.force_refresh !== true);
@@ -1745,12 +1807,14 @@ async function handleBridgeCommand(method, params) {
             const y = bounds.rect.top + bounds.rect.height / 2;
             await cdpDispatchClick(targetTab.id, x, y);
             const fbRes = await chrome.tabs.sendMessage(targetTab.id, { action: 'GET_FEEDBACK' }).catch(() => null);
+            const riskWarning = await checkAndTripRiskSignals(targetTab.id, targetTab.url, targetTab.title);
             return {
               result: {
                 success: true,
                 trusted: true,
                 message: `已通过 CDP 物理级真机模拟点击元素 (x: ${Math.round(x)}, y: ${Math.round(y)}, isTrusted: true)`,
-                feedback: fbRes?.feedback
+                feedback: fbRes?.feedback,
+                ...(riskWarning ? { risk_warning: riskWarning } : {})
               }
             };
           }
@@ -1957,6 +2021,20 @@ async function handleBridgeCommand(method, params) {
     if (readCacheKey) {
       readCache.set(readCacheKey, { ts: Date.now(), result: finalResult });
     }
+    if (method === 'browser_get_network_logs') {
+      const logs = Array.isArray(response.logs) ? response.logs : (Array.isArray(finalResult) ? finalResult : []);
+      const now = Date.now();
+      const hit429 = logs.find(l => l && l.status === 429 && (!l.timestamp || now - l.timestamp < 15000));
+      const host = extractHostname(targetTab.url);
+      if (hit429 && host) {
+        tripDomainCooldown(host, `网络日志检测到 HTTP 429 (${hit429.url})`);
+      }
+    } else if (method === 'browser_click' || method === 'browser_scroll') {
+      const riskWarning = await checkAndTripRiskSignals(targetTab.id, targetTab.url, targetTab.title);
+      if (riskWarning && finalResult && typeof finalResult === 'object' && !Array.isArray(finalResult)) {
+        finalResult.risk_warning = riskWarning;
+      }
+    }
     return { result: finalResult };
   } catch (err) {
     return { error: `执行失败 (${method} on Tab ${targetTab.id}): ${err.message}` };
@@ -2029,6 +2107,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'SELECTION_CHANGED') {
     lastSelectedText = msg.text;
     notifySidePanel({ type: 'SELECTION_CHANGED', text: msg.text });
+  } else if (msg.type === 'RISK_SIGNAL_429') {
+    const host = extractHostname(msg.pageUrl || msg.url);
+    if (host) {
+      tripDomainCooldown(host, `实时捕获 HTTP 429 (${msg.url || host})`);
+    }
   } else if (msg.type === 'GET_INITIAL_STATE') {
     const tid = boundTabId || (activeControlledTab ? activeControlledTab.id : null);
     sendResponse({
