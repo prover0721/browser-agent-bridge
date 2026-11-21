@@ -1134,3 +1134,30 @@ test('browser_reload matches EasyEDA tab by url_pattern, waits ready, and enable
   assert.equal(reloadRes.result.keep_alive, true);
   assert.match(reloadRes.result.message, /保活/);
 });
+
+test('browser_screenshot deduplicates repeated captures within short TTL and invalidates on mutation or force_refresh', async () => {
+  const ext = background();
+  let captureCount = 0;
+  const origCapture = ext.context.chrome.tabs.captureVisibleTab;
+  ext.context.chrome.tabs.captureVisibleTab = async (...args: any[]) => {
+    captureCount += 1;
+    return origCapture(...args);
+  };
+
+  const first = await ext.call('browser_screenshot', { tab_id: 1 });
+  assert.ok(first.result?.data_url);
+  assert.equal(captureCount, 1);
+
+  const second = await ext.call('browser_screenshot', { tab_id: 1 });
+  assert.equal(second.result.cached, true);
+  assert.equal(captureCount, 1);
+
+  const forced = await ext.call('browser_screenshot', { tab_id: 1, force_refresh: true });
+  assert.equal(forced.result.cached, undefined);
+  assert.equal(captureCount, 2);
+
+  await ext.call('browser_click', { tab_id: 1, element_id: 1 });
+  const afterMutation = await ext.call('browser_screenshot', { tab_id: 1 });
+  assert.equal(afterMutation.result.cached, undefined);
+  assert.equal(captureCount, 3);
+});

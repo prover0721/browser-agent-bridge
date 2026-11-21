@@ -856,6 +856,10 @@ const TOOLS: Tool[] = [
           type: 'number',
           description: '可选：目标标签页 ID',
         },
+        force_refresh: {
+          type: 'boolean',
+          description: '可选：是否跳过短期去重缓存强制重新截屏，默认为 false',
+        },
       },
       required: [],
     },

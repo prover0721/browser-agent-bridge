@@ -1509,10 +1509,23 @@ async function handleBridgeCommand(method, params) {
     };
   }
 
-  // ── 2.0 靶向屏幕与局部元素截图 ──
+  // ── 2.0 靶向屏幕与局部元素截图（含 2.5s 短期去重缓存） ──
   if (method === 'browser_screenshot') {
     const targetTab = await resolveTargetTab(params.tab_id);
     if (!targetTab || !targetTab.id) return { error: '未找到目标标签页' };
+
+    const format = params.format === 'png' ? 'png' : 'jpeg';
+    const quality = Math.min(100, Math.max(1, Number(params.quality) || 80));
+    const shotCacheKey = params.force_refresh !== true
+      ? `${targetTab.id}:browser_screenshot:${JSON.stringify({ f: format, q: quality, a: params.annotate === true, id: params.element_id ?? null, sel: params.selector ?? null })}`
+      : null;
+
+    if (shotCacheKey) {
+      const cached = readCache.get(shotCacheKey);
+      if (cached && Date.now() - cached.ts < READ_CACHE_TTL_MS) {
+        return { result: { ...cached.result, cached: true } };
+      }
+    }
 
     let marks = null;
     if (params.annotate === true) {
@@ -1521,9 +1534,6 @@ async function handleBridgeCommand(method, params) {
       if (somRes?.marks) marks = somRes.marks;
       await new Promise(r => setTimeout(r, 60));
     }
-
-    const format = params.format === 'png' ? 'png' : 'jpeg';
-    const quality = Math.min(100, Math.max(1, Number(params.quality) || 80));
 
     let dataUrl = '';
     try {
@@ -1550,29 +1560,29 @@ async function handleBridgeCommand(method, params) {
           payload: { element_id: params.element_id, selector: params.selector }
         });
         if (bounds?.success && bounds.rect) {
-          return {
-            result: {
-              data_url: dataUrl,
-              rect: bounds.rect,
-              element_id: params.element_id,
-              selector: params.selector,
-              format,
-              marks: marks || undefined,
-              message: `已成功获取目标元素视口截图坐标 (x: ${bounds.rect.left}, y: ${bounds.rect.top}, w: ${bounds.rect.width}, h: ${bounds.rect.height})`
-            }
+          const resultObj = {
+            data_url: dataUrl,
+            rect: bounds.rect,
+            element_id: params.element_id,
+            selector: params.selector,
+            format,
+            marks: marks || undefined,
+            message: `已成功获取目标元素视口截图坐标 (x: ${bounds.rect.left}, y: ${bounds.rect.top}, w: ${bounds.rect.width}, h: ${bounds.rect.height})`
           };
+          if (shotCacheKey) readCache.set(shotCacheKey, { ts: Date.now(), result: resultObj });
+          return { result: resultObj };
         }
       } catch {}
     }
 
-    return {
-      result: {
-        data_url: dataUrl,
-        format,
-        marks: marks || undefined,
-        message: marks ? `已成功捕获带 SoM (Set-of-Marks) 编号标注的视口截图 (共标注 ${marks.length} 个交互元素)` : '已成功捕获当前视口屏幕截图'
-      }
+    const resultObj = {
+      data_url: dataUrl,
+      format,
+      marks: marks || undefined,
+      message: marks ? `已成功捕获带 SoM (Set-of-Marks) 编号标注的视口截图 (共标注 ${marks.length} 个交互元素)` : '已成功捕获当前视口屏幕截图'
     };
+    if (shotCacheKey) readCache.set(shotCacheKey, { ts: Date.now(), result: resultObj });
+    return { result: resultObj };
   }
 
   // ── 2.2 验证码滑块缺口自动识别与一键破盾 ──
